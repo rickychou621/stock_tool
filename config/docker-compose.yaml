@@ -1,0 +1,49 @@
+services:
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: ../config/docker/frontend.Dockerfile
+    image: stock_tool_frontend
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+    env_file:
+      - ./frontend.env
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: ../config/docker/backend.Dockerfile
+    image: stock_tool_backend
+    ports:
+      - "8000:8000"   # 直接測試API用，不經過nginx
+    env_file:
+      - ./backend.env
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  db:
+    image: mysql:8
+    env_file:
+      - ./db.env
+    volumes:
+      - ../mysql/data:/var/lib/mysql
+      - ../mysql/init:/docker-entrypoint-initdb.d
+    ports:
+      - "3306:3306"   # 本機除錯用，正式環境可移除對外暴露
+    restart: unless-stopped
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    environment:
+      PMA_HOST: db
+    ports:
+      - "8080:80"
+    depends_on:
+      - db
+    restart: unless-stopped

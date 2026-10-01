@@ -1,0 +1,21 @@
+# 開發模式覆蓋設定：疊加在 docker-compose.yaml 之上使用，讓frontend改跑Vite dev server
+# (支援HMR熱更新)，取代正式環境的nginx靜態檔案serve，改完程式碼存檔、瀏覽器就會自動更新，
+# 不需要重新 docker compose up --build。
+#
+# 用法：docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up --build -d
+#
+# backend/db/phpmyadmin 不受影響，維持原本設定。
+
+services:
+  frontend:
+    build:
+      target: deps
+    image: stock_tool_frontend_dev
+    command: npm run dev -- --host 0.0.0.0
+    ports:
+      - "5173:5173"
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_PROXY_TARGET=http://backend:8000

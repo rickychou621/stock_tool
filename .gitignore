@@ -1,0 +1,28 @@
+# 環境變數/機密設定
+config/*.env
+backend/.env
+
+# MySQL 資料檔(僅保留 init/ 內的初始化script)
+mysql/data/*
+!mysql/data/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / React
+node_modules/
+dist/
+
+# OS
+.DS_Store
+
+# Local environment overrides and compiler caches
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
