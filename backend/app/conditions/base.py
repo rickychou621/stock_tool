@@ -20,6 +20,7 @@ class ConditionResult:
     is_met: bool
     reason: str
     data_sufficient: bool = True
+    upper_band_status: str | None = None
 
 
 class Condition(ABC):

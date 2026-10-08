@@ -26,6 +26,7 @@ export interface ConditionEvaluation {
   isMet: boolean
   reason: string
   dataSufficient: boolean
+  upperBandStatus?: 'touched' | 'breakout' | null
 }
 
 export interface RuleEvaluationResult {

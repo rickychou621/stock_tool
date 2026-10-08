@@ -1,6 +1,7 @@
 """規則組合對外API的請求/回應格式。"""
 
 from datetime import date
+from typing import Literal
 
 from app.core.schemas import CamelModel
 
@@ -29,6 +30,7 @@ class ConditionEvaluationSchema(CamelModel):
     is_met: bool
     reason: str
     data_sufficient: bool = True
+    upper_band_status: Literal["touched", "breakout"] | None = None
 
 
 class RuleEvaluationSchema(CamelModel):

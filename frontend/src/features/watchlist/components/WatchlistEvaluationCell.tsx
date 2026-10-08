@@ -16,7 +16,14 @@ export function WatchlistEvaluationCell({
   onEvaluate,
 }: Props) {
   const status = error ? 'error' : outcome(results, expected)
-  const passed = results.filter((r) => !r.stale && r.result.isMet).length
+  const matchedResults = results.filter((r) => !r.stale && r.result.isMet)
+  const passed = matchedResults.length
+  const visibleResults = passed ? matchedResults : results
+  const upperBandMarks = [...new Set(
+    visibleResults.filter((r) => !r.stale).flatMap((r) =>
+      r.result.conditionResults.flatMap((c) => c.upperBandStatus ? [c.upperBandStatus] : []),
+    ),
+  )]
   const unresolved = results.filter(
     (r) => r.result.status === 'error' || r.result.status === 'insufficient_data',
   ).length
@@ -38,6 +45,11 @@ export function WatchlistEvaluationCell({
           {results.length ? '重新評估' : '評估'}
         </button>
       </div>
+      {!busy && !error && upperBandMarks.map((mark) => (
+        <span className="upper-band-mark" key={mark}>
+          {mark === 'breakout' ? '突破上軌' : '觸及上軌'} · 壓力參考
+        </span>
+      ))}
       {!!results.length && (
         <span className="muted">
           {passed}／{expected} 條通過
@@ -58,8 +70,8 @@ export function WatchlistEvaluationCell({
       )}
       {!!results.length && (
         <details className="evaluation-details">
-          <summary>戰法結果與評估時間</summary>
-          {results.map((r) => (
+          <summary>{passed ? '通過戰法與評估時間' : '戰法結果與評估時間'}</summary>
+          {visibleResults.map((r) => (
             <div className="rule-result" key={r.ruleId}>
               <strong>
                 {r.ruleName} · {OUTCOME_LABELS[r.result.status]}

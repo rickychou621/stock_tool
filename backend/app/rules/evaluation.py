@@ -20,6 +20,7 @@ class ConditionEvaluation:
     is_met: bool
     reason: str
     data_sufficient: bool = True
+    upper_band_status: str | None = None
 
 
 @dataclass
@@ -59,6 +60,7 @@ class RuleEvaluationService:
                     result.is_met,
                     result.reason,
                     result.data_sufficient,
+                    result.upper_band_status,
                 )
             )
 

@@ -26,6 +26,8 @@ def fingerprint(rule: WatchRule) -> str:
             for c in sorted(rule.conditions, key=lambda c: c.sort_order)
         ],
     }
+    if any(c.condition_id == "bollinger_mid_up" for c in rule.conditions):
+        definition["bollinger_revision"] = 2
     return hashlib.sha256(json.dumps(definition, sort_keys=True).encode()).hexdigest()
 
 

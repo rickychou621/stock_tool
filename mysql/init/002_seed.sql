@@ -15,7 +15,7 @@ ON DUPLICATE KEY UPDATE name = VALUES(name);
 
 INSERT INTO condition_catalog (id, name, description, required_timeframe, update_frequency, param_schema) VALUES
     ('ema_golden_cross', 'EMA黃金交叉', 'EMA短週期上穿長週期', '分K', 'realtime', JSON_OBJECT('short_period', 'int', 'long_period', 'int')),
-    ('bollinger_mid_up', '布林上軌區間(月線上揚)', '月線(20日中軌)上揚，且股價維持在中軌到上軌之間，不含跌破中軌或衝出上軌', '日K', 'daily', JSON_OBJECT('period', 'int', 'num_std', 'float', 'slope_lookback', 'int')),
+    ('bollinger_mid_up', '布林上軌區間(月線上揚)', '月線(20日中軌)上揚，且收盤未跌破月線；突破布林上軌仍符合。符合代表偏多型態，不代表立即進場', '日K', 'daily', JSON_OBJECT('period', 'int', 'num_std', 'float', 'slope_lookback', 'int')),
     ('kd_golden_cross', 'KD黃金交叉', 'K值上穿D值', '月K', 'monthly', JSON_OBJECT()),
     ('macd_positive', 'MACD轉正', 'DIF與MACD值皆大於0', '月K', 'monthly', JSON_OBJECT()),
     ('macd_histogram_rising', 'MACD動能增強(柱狀體上升)', 'MACD柱狀體(DIF-訊號線)較上月增加：綠柱縮減或紅柱增加', '月K', 'monthly', JSON_OBJECT('short_period', 'int', 'long_period', 'int', 'signal_period', 'int')),

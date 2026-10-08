@@ -31,24 +31,28 @@ class BollingerMidUpCondition(Condition):
 
         latest_close = closes[-1]
         mid_rising = mid_now > mid_prev
+        upper_status = None
+        upper_note = ""
+        if latest_close > upper_now:
+            upper_status = "breakout"
+            upper_note = f"；突破布林上軌{upper_now:.2f}（壓力參考，不影響符合判斷）"
+        elif bars[-1].high >= upper_now:
+            upper_status = "touched"
+            upper_note = f"；當日最高價觸及布林上軌{upper_now:.2f}（壓力參考）"
 
         if not mid_rising:
             reason = (
                 f"月線(中軌)下彎中，目前{mid_now:.2f}、{slope_lookback}日前{mid_prev:.2f}，"
                 "非偏多格局"
             )
-            return ConditionResult(False, reason)
+            return ConditionResult(False, reason + upper_note, upper_band_status=upper_status)
 
         if latest_close < mid_now:
             reason = f"股價{latest_close:.2f}已跌破月線{mid_now:.2f}，不在布林上軌區間"
-            return ConditionResult(False, reason)
-
-        if latest_close > upper_now:
-            reason = f"股價{latest_close:.2f}已超出布林上軌{upper_now:.2f}，過熱區間"
-            return ConditionResult(False, reason)
+            return ConditionResult(False, reason + upper_note, upper_band_status=upper_status)
 
         reason = (
             f"月線上揚(目前{mid_now:.2f} > {slope_lookback}日前{mid_prev:.2f})，"
-            f"股價{latest_close:.2f}維持在布林上軌區間({mid_now:.2f}~{upper_now:.2f})"
+            f"股價{latest_close:.2f}未跌破月線{mid_now:.2f}"
         )
-        return ConditionResult(True, reason)
+        return ConditionResult(True, reason + upper_note, upper_band_status=upper_status)

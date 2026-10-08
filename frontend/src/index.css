@@ -620,6 +620,18 @@ details li + li {
 }
 
 /* Evaluation outcomes have stronger emphasis than the per-stock action button. */
+.upper-band-mark {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid #a16207;
+  border-radius: 0.4rem;
+  background: #fef3c7;
+  color: #713f12;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
 .evaluation-cell {
   display: flex;
   flex-direction: column;

@@ -86,13 +86,31 @@ def test_bollinger_mid_up_false_when_price_drops_below_mid() -> None:
     assert "跌破月線" in result.reason
 
 
-def test_bollinger_mid_up_false_when_price_blows_past_upper_band() -> None:
+def test_bollinger_mid_up_true_when_price_blows_past_upper_band() -> None:
     # 前面長時間持平(波動小、上下軌很窄)，最後一天暴衝，才會真的衝出上軌而不是被自己拉寬。
     closes = [10.0] * 13 + [50.0]
     bars = [_bar(i, c) for i, c in enumerate(closes)]
     result = BollingerMidUpCondition().evaluate(bars, {"period": 10, "slope_lookback": 2})
+    assert result.is_met is True
+    assert "突破布林上軌" in result.reason
+    assert result.upper_band_status == "breakout"
+
+
+def test_bollinger_touch_is_reference_and_does_not_reject_rising_trend() -> None:
+    # 最後3筆為12、12、12，中軌與上軌皆為12，高於兩日前中軌。
+    bars = [_bar(i, c) for i, c in enumerate([10.0, 10.0, 12.0, 12.0, 12.0])]
+    result = BollingerMidUpCondition().evaluate(bars, {"period": 3, "slope_lookback": 2})
+    assert result.is_met is True
+    assert result.upper_band_status == "touched"
+
+
+def test_bollinger_intraday_touch_does_not_override_close_below_mid() -> None:
+    closes = [10.0, 10.2, 10.4, 10.6, 10.8, 11.0, 11.2, 10.5]
+    bars = [_bar(i, c, high=20.0 if i == 7 else c) for i, c in enumerate(closes)]
+    result = BollingerMidUpCondition().evaluate(bars, {"period": 5, "slope_lookback": 2})
     assert result.is_met is False
-    assert "過熱" in result.reason
+    assert "跌破月線" in result.reason
+    assert result.upper_band_status == "touched"
 
 
 def test_kd_golden_cross_not_enough_monthly_data() -> None:
