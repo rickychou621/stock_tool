@@ -2,9 +2,11 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 
 const NAV_ITEMS = [
   { to: '/', label: '觀察清單' },
+  { to: '/market-scan', label: '全市場掃描' },
   { to: '/matches', label: '今日符合戰法清單' },
   { to: '/candidates', label: '候選池' },
   { to: '/chart', label: '個股查詢' },
+  { to: '/backtest', label: '戰法回測' },
   { to: '/rules', label: '規則管理' },
   { to: '/settings', label: '系統設定' },
 ]

@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { PageHeader } from '../../components/PageHeader'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { apiClient } from '../../api/client'
@@ -38,7 +39,7 @@ export function SettingsPage() {
         {data && (
           <div className="stat-grid">
             <div className="stat-tile">
-              <span className="stat-tile__label">候選池更新頻率</span>
+              <span className="stat-tile__label">候選池更新頻率（尚未啟用）</span>
               <span className="stat-tile__value">{data.screeningIntervalMinutes} 分鐘</span>
             </div>
             <div className="stat-tile">
@@ -53,7 +54,9 @@ export function SettingsPage() {
             </div>
           </div>
         )}
-        <p className="muted">目前僅供查看，此頁尚不支援修改參數。</p>
+        <p className="muted">
+          此頁僅供查看。每日自動更新請至<Link to="/">觀察清單</Link>設定；候選池定時更新尚未啟用。
+        </p>
       </div>
 
       <div className="card">

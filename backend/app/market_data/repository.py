@@ -1,4 +1,4 @@
-from sqlalchemy import exists, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.orm import Session
 
@@ -6,8 +6,9 @@ from app.market_data.models import Stock, StockDividendEvent, StockPriceDaily
 
 
 class MarketDataRepository:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, *, commit=True) -> None:
         self._db = db
+        self._commit = commit
 
     def upsert_daily_bars(self, ticker: str, bars: list[dict]) -> int:
         if not bars:
@@ -21,9 +22,13 @@ class MarketDataRepository:
             low=stmt.inserted.low,
             close=stmt.inserted.close,
             volume=stmt.inserted.volume,
+            turnover=func.coalesce(stmt.inserted.turnover, StockPriceDaily.turnover),
         )
         self._db.execute(stmt)
-        self._db.commit()
+        if self._commit:
+            self._db.commit()
+        else:
+            self._db.flush()
         return len(rows)
 
     def upsert_dividend_events(self, ticker: str, events: list[dict]) -> int:
@@ -39,7 +44,10 @@ class MarketDataRepository:
             cash_capital_increase_price=stmt.inserted.cash_capital_increase_price,
         )
         self._db.execute(stmt)
-        self._db.commit()
+        if self._commit:
+            self._db.commit()
+        else:
+            self._db.flush()
         return len(rows)
 
     def get_all_bars(self, ticker: str) -> list[StockPriceDaily]:
@@ -87,4 +95,7 @@ class MarketDataRepository:
             bar.adj_high = values["high"]
             bar.adj_low = values["low"]
             bar.adj_close = values["close"]
-        self._db.commit()
+        if self._commit:
+            self._db.commit()
+        else:
+            self._db.flush()

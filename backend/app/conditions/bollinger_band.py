@@ -29,6 +29,7 @@ class BollingerMidUpCondition(Condition):
         assert prev_band is not None
         _, mid_prev, _ = prev_band
 
+        indicators = {"mid": mid_now, "upper": upper_now, "slope": mid_now - mid_prev}
         latest_close = closes[-1]
         mid_rising = mid_now > mid_prev
         upper_status = None
@@ -45,14 +46,20 @@ class BollingerMidUpCondition(Condition):
                 f"月線(中軌)下彎中，目前{mid_now:.2f}、{slope_lookback}日前{mid_prev:.2f}，"
                 "非偏多格局"
             )
-            return ConditionResult(False, reason + upper_note, upper_band_status=upper_status)
+            return ConditionResult(
+                False, reason + upper_note, upper_band_status=upper_status, indicators=indicators
+            )
 
         if latest_close < mid_now:
             reason = f"股價{latest_close:.2f}已跌破月線{mid_now:.2f}，不在布林上軌區間"
-            return ConditionResult(False, reason + upper_note, upper_band_status=upper_status)
+            return ConditionResult(
+                False, reason + upper_note, upper_band_status=upper_status, indicators=indicators
+            )
 
         reason = (
             f"月線上揚(目前{mid_now:.2f} > {slope_lookback}日前{mid_prev:.2f})，"
             f"股價{latest_close:.2f}未跌破月線{mid_now:.2f}"
         )
-        return ConditionResult(True, reason + upper_note, upper_band_status=upper_status)
+        return ConditionResult(
+            True, reason + upper_note, upper_band_status=upper_status, indicators=indicators
+        )

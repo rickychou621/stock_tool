@@ -26,7 +26,7 @@ class KdGoldenCrossCondition(Condition):
         crossed = prev_k <= prev_d and cur_k > cur_d
         state = "黃金交叉" if crossed else "未交叉"
         reason = f"月K K值={cur_k:.1f}，D值={cur_d:.1f}，{state}"
-        return ConditionResult(crossed, reason)
+        return ConditionResult(crossed, reason, indicators={"k": cur_k, "d": cur_d})
 
 
 @register_condition
@@ -54,7 +54,9 @@ class MacdPositiveCondition(Condition):
 
         is_met = dif > 0 and signal > 0
         reason = f"月K DIF={dif:.2f}，MACD訊號線={signal:.2f}"
-        return ConditionResult(is_met, reason)
+        return ConditionResult(
+            is_met, reason, indicators={"dif": dif, "signal": signal, "histogram": dif - signal}
+        )
 
 
 def _histogram_label(current: float, previous: float) -> str:
@@ -89,4 +91,6 @@ class MacdHistogramRisingCondition(Condition):
         is_met = current > previous
         label = _histogram_label(current, previous)
         reason = f"MACD柱狀體{label}(本月{current:.2f}，上月{previous:.2f})"
-        return ConditionResult(is_met, reason)
+        return ConditionResult(
+            is_met, reason, indicators={"histogram": current, "previous": previous}
+        )

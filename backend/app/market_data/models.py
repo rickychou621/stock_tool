@@ -47,6 +47,7 @@ class StockPriceDaily(Base):
     low: Mapped[float] = mapped_column(Numeric(10, 2))
     close: Mapped[float] = mapped_column(Numeric(10, 2))
     volume: Mapped[int] = mapped_column(BigInteger)
+    turnover: Mapped[float | None] = mapped_column(Numeric(22, 2), nullable=True)
     adj_open: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     adj_high: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     adj_low: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)

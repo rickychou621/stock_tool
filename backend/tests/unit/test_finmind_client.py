@@ -40,6 +40,7 @@ def test_get_daily_price_parses_response() -> None:
             "low": 2390.0,
             "close": 2440.0,
             "volume": 31855287,
+            "turnover": None,
         }
     ]
 

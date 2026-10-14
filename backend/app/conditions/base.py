@@ -2,7 +2,7 @@
 並用 registry.register_condition 註冊，讓規則組合(rules/)可以用條件id自由引用、組裝AND/OR。"""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, ClassVar
 
@@ -21,6 +21,7 @@ class ConditionResult:
     reason: str
     data_sufficient: bool = True
     upper_band_status: str | None = None
+    indicators: dict[str, float] = field(default_factory=dict)
 
 
 class Condition(ABC):

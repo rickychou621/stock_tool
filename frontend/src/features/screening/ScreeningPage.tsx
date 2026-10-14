@@ -89,7 +89,7 @@ export function ScreeningPage() {
           {notifyMutation.isPending ? '發送中…' : `通知 Telegram（${pendingStocks} 檔）`}
         </button>
         <p className="muted">
-          只通知本次符合戰法的個股；同股符合多條戰法會分別通知，今天已通知的戰法不重送。
+          只通知本次符合戰法的個股，每則訊息最多彙整 50 筆，文字較長時會分段。同股不同戰法各算一筆，今天已通知的戰法不重送。
         </p>
         {scanMutation.isError && (
           <p role="alert" className="error-text">
@@ -103,9 +103,9 @@ export function ScreeningPage() {
         )}
         {notifyMutation.data && (
           <p role="status">
-            已發送 {notifyMutation.data.sentIds.length} 則、已通知略過{' '}
-            {notifyMutation.data.skippedIds.length} 則、失敗 {notifyMutation.data.failedIds.length}{' '}
-            則。{notifyMutation.data.failedIds.length > 0 && '再次點擊只會處理尚未成功的項目。'}
+            已通知 {notifyMutation.data.sentIds.length} 筆、已通知略過{' '}
+            {notifyMutation.data.skippedIds.length} 筆、失敗 {notifyMutation.data.failedIds.length}{' '}
+            筆。{notifyMutation.data.failedIds.length > 0 && '再次點擊只會處理尚未成功的項目。'}
           </p>
         )}
       </div>

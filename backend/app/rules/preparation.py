@@ -36,7 +36,7 @@ def history_days(rule: WatchRule) -> int:
             (max(periods) + 3) * 31 if condition.required_timeframe == "月K" else sum(periods) * 3
         )
         days = max(days, required)
-    return min(days, 1000)
+    return days
 
 
 class EvaluationPreparationService:

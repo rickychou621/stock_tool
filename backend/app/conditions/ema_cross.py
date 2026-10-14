@@ -31,4 +31,6 @@ class EmaGoldenCrossCondition(Condition):
         reason = (
             f"{short_period}EMA={ema_short[-1]:.2f}，{long_period}EMA={ema_long[-1]:.2f}，{state}"
         )
-        return ConditionResult(crossed, reason)
+        return ConditionResult(
+            crossed, reason, indicators={"short": ema_short[-1], "long": ema_long[-1]}
+        )

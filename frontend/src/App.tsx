@@ -1,4 +1,6 @@
+import { MarketScanPage } from './features/market-scan/MarketScanPage'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BacktestPage } from './features/backtest/BacktestPage'
 import { Layout } from './components/Layout'
 import { ScreeningPage } from './features/screening/ScreeningPage'
 import { CandidatePoolPage } from './features/screening/CandidatePoolPage'
@@ -13,6 +15,8 @@ function App() {
       <Routes>
         <Route element={<Layout />}>
           <Route index element={<WatchlistPage />} />
+          <Route path="market-scan" element={<MarketScanPage />} />
+          <Route path="backtest" element={<BacktestPage />} />
           <Route path="matches" element={<ScreeningPage />} />
           <Route path="candidates" element={<CandidatePoolPage />} />
           <Route path="watchlist" element={<WatchlistPage />} />

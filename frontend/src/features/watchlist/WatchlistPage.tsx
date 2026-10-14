@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '../../api/client'
 import type { WatchRule } from '../rules/types'
+import { WatchlistSchedule } from './components/WatchlistSchedule'
 import { WatchlistTable } from './components/WatchlistTable'
 import { AddWatchlistForm } from './components/AddWatchlistForm'
 import {
@@ -52,7 +53,6 @@ export function WatchlistPage() {
   const saved = useQuery({
     queryKey: ['saved-evaluations'],
     queryFn: () => apiClient.get<SavedEvaluation[]>('/watchlist/evaluations'),
-    refetchInterval: busy ? false : 30000,
   })
   const chosen = params.has('rules')
     ? params.get('rules')!.split(',').map(Number)
@@ -145,6 +145,7 @@ export function WatchlistPage() {
       <p className="muted">
         新增或進入清單不會自動評估。前往<Link to="/matches">今日符合戰法清單</Link>掃描新機會。
       </p>
+      <WatchlistSchedule rules={rules.data} />
       <div className="overview-grid">
         <div className="overview-tile">
           <span>追蹤股票</span>

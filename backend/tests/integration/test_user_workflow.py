@@ -206,10 +206,11 @@ def test_notification_includes_stock_name_once(context, existing_name):
         db.commit()
     result = client.post("/alerts/notify", json={"alertIds": [alert.id]}).json()
     assert result["sentIds"] == [alert.id]
-    assert sent[0].startswith("2330 台積電 符合「爆量戰法」")
+    assert "2330 台積電 符合「爆量戰法」" in sent[0]
     assert sent[0].count("台積電") == 1
     assert "行情日期：" in sent[0]
-    assert alert.message == sent[0]
+    assert alert.message.startswith("2330 台積電 符合「爆量戰法」")
+    assert "符合戰法摘要" not in alert.message
 
 
 def _watch_item(client):
@@ -353,3 +354,83 @@ def test_partial_market_update_invalidates_saved_result(context, monkeypatch):
         MarketDataService(db).sync_daily_prices("2330")
     db.rollback()
     assert client.get("/watchlist/evaluations").json()[0]["stale"] is True
+
+
+@pytest.mark.parametrize("count, sizes", [(50, [50]), (51, [50, 1]), (120, [50, 50, 20])])
+def test_notification_batches_at_most_fifty_entries(context, monkeypatch, count, sizes):
+    client, db, rule_id, sent = context
+    monkeypatch.setattr("app.alerts.notification.sleep", lambda _: None)
+    alerts = [
+        AlertLog(
+            rule_id=rule_id,
+            ticker="2330",
+            message=f"2330 符合「戰法{i}」\n行情日期：2026-10-13，參考價：100\n完整判斷理由",
+        )
+        for i in range(count)
+    ]
+    db.add_all(alerts)
+    db.commit()
+    ids = [alert.id for alert in alerts]
+    result = client.post("/alerts/notify", json={"alertIds": ids + [ids[0]]}).json()
+    assert result == {"sentIds": ids, "skippedIds": [], "failedIds": []}
+    assert [len(message.splitlines()) - 1 for message in sent] == sizes
+    assert all("完整判斷理由" not in message for message in sent)
+    assert all("完整判斷理由" in alert.message for alert in alerts)
+    again = client.post("/alerts/notify", json={"alertIds": ids + [99999]}).json()
+    assert again == {"sentIds": [], "skippedIds": ids, "failedIds": [99999]}
+    assert len(sent) == len(sizes)
+
+
+def test_batch_failure_only_retries_failed_message(context, monkeypatch):
+    client, db, rule_id, sent = context
+    monkeypatch.setattr("app.alerts.notification.sleep", lambda _: None)
+    alerts = [
+        AlertLog(rule_id=rule_id, ticker="2330", message=f"2330 符合「戰法{i}」")
+        for i in range(101)
+    ]
+    db.add_all(alerts)
+    db.commit()
+    ids = [alert.id for alert in alerts]
+    attempts = []
+
+    def send(self, message):
+        attempts.append(message)
+        if len(attempts) == 2:
+            raise RuntimeError("unavailable")
+        sent.append(message)
+
+    monkeypatch.setattr(TelegramNotifier, "send_alert", send)
+    result = client.post("/alerts/notify", json={"alertIds": ids}).json()
+    assert result == {"sentIds": ids[:50] + ids[100:], "skippedIds": [], "failedIds": ids[50:100]}
+    again = client.post("/alerts/notify", json={"alertIds": ids}).json()
+    assert again == {"sentIds": ids[50:100], "skippedIds": ids[:50] + ids[100:], "failedIds": []}
+    assert len(sent) == 3
+
+
+def test_long_unicode_digest_splits_without_losing_alerts(context, monkeypatch):
+    client, db, rule_id, sent = context
+    monkeypatch.setattr("app.alerts.notification.sleep", lambda _: None)
+    db.scalar(select(Stock).where(Stock.ticker == "2330")).name = "台積電"
+    alerts = [
+        AlertLog(
+            rule_id=rule_id,
+            ticker="2330",
+            message=(
+                f"2330 符合「{'🌕' * 100}{i}」\n"
+                "行情日期：2026-10-13，參考價：100\n"
+                "當日最高價觸及布林上軌100.00（壓力參考）"
+            ),
+        )
+        for i in range(50)
+    ]
+    db.add_all(alerts)
+    db.commit()
+    ids = [alert.id for alert in alerts]
+    result = client.post("/alerts/notify", json={"alertIds": ids}).json()
+    assert result["sentIds"] == ids
+    assert result["failedIds"] == []
+    assert len(sent) > 1
+    assert sum(len(message.splitlines()) - 1 for message in sent) == 50
+    assert all(len(message.encode("utf-16-le")) // 2 <= 4096 for message in sent)
+    assert sum(message.count("台積電") for message in sent) == 50
+    assert sum(message.count("觸及上軌") for message in sent) == 50

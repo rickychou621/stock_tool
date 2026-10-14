@@ -3,13 +3,14 @@
 這是唯一「真正跑戰法邏輯」的地方 —— 不管是API被動呼叫、還是之後排程主動觸發，
 都應該呼叫這個service，不要在別的地方複製一份判斷邏輯。"""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 from sqlalchemy.orm import Session
 
 from app.conditions.loader import load_condition_bars
 from app.conditions.registry import get_condition
+from app.conditions.types import ConditionBar
 from app.market_data.repository import MarketDataRepository
 from app.rules.models import WatchRule
 
@@ -21,6 +22,7 @@ class ConditionEvaluation:
     reason: str
     data_sufficient: bool = True
     upper_band_status: str | None = None
+    indicators: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -40,7 +42,13 @@ class RuleEvaluationService:
 
     def evaluate(self, rule: WatchRule, ticker: str) -> RuleEvaluationResult:
         bars = load_condition_bars(self._market_data_repository, ticker)
+        return self.evaluate_bars(rule, ticker, bars)
 
+    @staticmethod
+    def evaluate_bars(
+        rule: WatchRule, ticker: str, bars: list[ConditionBar]
+    ) -> RuleEvaluationResult:
+        """Same engine for latest and historical evaluations; caller controls the cutoff."""
         condition_results: list[ConditionEvaluation] = []
         has_error = False
         for rule_condition in sorted(rule.conditions, key=lambda c: c.sort_order):
@@ -61,6 +69,7 @@ class RuleEvaluationService:
                     result.reason,
                     result.data_sufficient,
                     result.upper_band_status,
+                    result.indicators,
                 )
             )
 

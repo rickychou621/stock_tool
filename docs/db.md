@@ -182,3 +182,25 @@ watch_rules 1───N alerts_log
 `005_watchlist_workflow.sql` 新增 stocks.sector（使用者觀察分類）、stocks.data_version（行情寫入版本）及 watchlist_evaluations。後者以 item_id + rule_id 唯一，保存 JSON 評估結果、UTC evaluated_at、data_version 及 rule_fingerprint。外鍵刪除採 CASCADE，觀察項目停用則不回傳其結果。
 
 既有資料庫需執行一次 005 遷移，不能僅重建 backend。ALTER TABLE 為一次性操作，重跑前需檢查欄位是否已存在；新資料庫由初始化目錄依序套用。族群初始資料僅補空白值，不覆寫既有自訂分類。
+
+
+## 觀察清單排程（006）
+
+`006_watchlist_schedule.sql` 新增 watchlist_schedule_settings、watchlist_schedule_latest 及 watchlist_schedule_errors。設定及最新摘要各保存一列，錯誤歷史永久保存且以 batch_id 關聯，覆寫摘要不會刪除歷史錯誤。last_attempt_date 使用台灣交易日期；其他時間儲存 UTC。
+
+既有 DB 需先套用 006，再重建 backend；SQL 可重複執行且不覆寫既有設定。完整流程、API 與操作命令見 [階段一交付文件](plan/02stock_tool_stage1_delivery.md)。
+
+
+## 歷史回測（007）
+
+`007_backtest.sql` 新增 backtest_latest_task（單筆任務狀態）、backtest_results（ticker + rule_id 最新成功結果）、backtest_data_coverage（已向來源查證的資料範圍）及 backtest_calendar_months（證交所交易日期快取）。結果保存統計摘要與交易／訊號 JSON，成功結果和股票進度在同一 transaction 更新。失敗保留舊結果並標記過期，整體績效只計入當次成功 batch。
+
+既有 DB 先套用 007 再重建 backend。方法、限制與驗證見 [階段二交付文件](plan/04stock_tool_stage2_delivery.md)。
+
+## 第三階段 Migration 008
+
+`mysql/init/008_market_scan.sql` 為可重複部署的新增式 migration，保留既有資料。共用 `stock_price_daily` 增加 nullable `turnover DECIMAL(22,2)`，只存來源實際成交金額。
+
+新增 `market_scan_instruments/settings/tasks/errors/coverage/candidates/indicators/publication` 八表。市場名單 active 不改使用者觀察清單；scan/initialize 最近任務各一筆；候選 unique(ticker, rule_id)，並索引 ticker、kind、rule_id、status、batch_id、price_date、close、volume、turnover。數值指標另外索引供動態條件查詢。
+
+候選、指標、批次 metadata 與 scan 完成狀態同一 transaction 發佈，工作中不改候選；錯誤採逐股／戰法保存及分頁查詢。初始化覆蓋記錄不取代共用 OHLC、股利表。完整欄位與語意見 [階段三交付紀錄](plan/06stock_tool_stage3_delivery.md)。

@@ -1,0 +1,755 @@
+import copy
+from datetime import date, datetime, timedelta
+from threading import Barrier, Event, Lock
+from types import SimpleNamespace as NS
+from unittest.mock import Mock
+from zoneinfo import ZoneInfo
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import BigInteger, Integer, MetaData, create_engine, delete, select
+from sqlalchemy.exc import StatementError
+from sqlalchemy.orm import sessionmaker
+
+from app.core.config import Settings
+from app.core.db import Base
+from app.core.dependencies import get_db
+from app.data_source.finmind_client import FinMindClient
+from app.main import app
+from app.market_data.models import Stock, StockPriceDaily
+from app.market_data.service import MarketDataService
+from app.market_data.validation import valid_ohlcv
+from app.market_scan.data import required_days, sync_ranges
+from app.market_scan.models import (
+    CandidateIndicator,
+    MarketInstrument,
+    ScanCandidate,
+    ScanCoverage,
+    ScanPublication,
+    ScanSettings,
+    ScanTask,
+)
+from app.market_scan.publication import publish
+from app.market_scan.rate_limit import RateLimiter
+from app.market_scan.service import MarketScanManager, ScanBusy, run_daily_market_scan
+from app.market_scan.universe import parse_universe, refresh_universe
+from app.market_scan.worker import Outcome, evaluate_stock
+from app.rules.models import WatchRule, WatchRuleCondition
+
+DAY = date(2026, 10, 12)
+NOW = datetime(2026, 10, 12, 19, tzinfo=ZoneInfo("Asia/Taipei"))
+DATES = [DAY - timedelta(days=i) for i in reversed(range(40))]
+
+
+def rule(rid=1, condition="bollinger_mid_up", params=None):
+    return NS(
+        id=rid,
+        name=f"戰法{rid}",
+        logic_operator="AND",
+        conditions=[
+            NS(
+                condition_id=condition,
+                params=params or {"period": 2, "slope_lookback": 1},
+                sort_order=0,
+            )
+        ],
+    )
+
+
+@pytest.fixture
+def factory(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'scan.db'}")
+    meta = MetaData()
+    for table in Base.metadata.sorted_tables:
+        table.to_metadata(meta)
+    for table in meta.tables.values():
+        for column in table.columns:
+            if isinstance(column.type, BigInteger):
+                column.type = Integer()
+    meta.create_all(engine)
+    sessions = sessionmaker(bind=engine)
+    with sessions() as db:
+        for i in range(1, 7):
+            db.add(Stock(ticker=str(i), name=f"股票{i}", market="上市"))
+            db.add(
+                MarketInstrument(
+                    ticker=str(i), kind="stock", listed_on=date(2000, 1, 1), active=True
+                )
+            )
+        for i in (1, 2):
+            db.add(
+                WatchRule(
+                    id=i,
+                    name=f"戰法{i}",
+                    is_enabled=True,
+                    conditions=[
+                        WatchRuleCondition(
+                            condition_id="bollinger_mid_up",
+                            params={"period": 2, "slope_lookback": 1},
+                        )
+                    ],
+                )
+            )
+        db.add(ScanSettings(id=1, enabled=True, rule_ids=[1, 2]))
+        db.commit()
+    yield sessions
+    engine.dispose()
+
+
+def bars(ticker="1", days=DATES, volume=0):
+    return [
+        StockPriceDaily(
+            ticker=ticker,
+            trade_date=d,
+            open=10 + i,
+            high=12 + i,
+            low=9 + i,
+            close=11 + i,
+            volume=volume,
+            adj_open=10 + i,
+            adj_high=12 + i,
+            adj_low=9 + i,
+            adj_close=11 + i,
+            turnover=None,
+        )
+        for i, d in enumerate(days)
+    ]
+
+
+def success(factory, item, rules, *args):
+    return evaluate_stock(item[0], "股票" + item[0], item[1], rules, bars(item[0]), DATES)
+
+
+def universe(db, day):
+    return [(str(i), "stock", date(2000, 1, 1)) for i in (1, 2)], None
+
+
+def manager(factory, worker=success, **kwargs):
+    return MarketScanManager(
+        factory,
+        calendar=lambda *args: DATES,
+        universe=universe,
+        worker=worker,
+        notifier=Mock(),
+        **kwargs,
+    )
+
+
+def test_universe_classification_includes_innovation_excludes_other_instruments():
+    def row(section, ticker, market, cfi):
+        return (
+            f"<tr><td>{section}</td></tr><tr><td>{ticker}　名稱</td><td>ISIN</td>"
+            f"<td>2020/01/01</td><td>{market}</td><td>產業</td><td>{cfi}</td><td></td></tr>"
+        )
+
+    html = "".join(
+        [
+            row("股票", "1", "上市", "ESVUFR"),
+            row("股票", "2", "上櫃", "ESVUFR"),
+            row("特別股", "3", "上市", "EPNRAR"),
+            row("ETF", "4", "上市", "CEOGEU"),
+            row("ETN", "5", "上市", "DXXXXX"),
+            row("創新板", "6", "上市臺灣創新板", "ESVUFR"),
+            row("上市認購(售)權證", "7", "上市", "RWSCCA"),
+        ]
+    )
+    assert [(r["ticker"], r["kind"]) for r in parse_universe(html, DAY)] == [
+        ("1", "stock"),
+        ("4", "etf"),
+        ("6", "stock"),
+    ]
+    with pytest.raises(ValueError):
+        parse_universe(html[:80], DAY)
+
+
+def test_universe_upsert_deactivation_completeness_and_fallback(factory):
+    source = [
+        dict(
+            ticker=f"{1000 + i}",
+            name=f"N{i}",
+            kind="stock" if i < 800 else "etf",
+            listed_on=date(2000, 1, 1),
+            sector="半導體",
+        )
+        for i in range(900)
+    ]
+    with factory() as db:
+        items, warning = refresh_universe(db, DAY, lambda d: source)
+        assert len(items) == 900 and not warning
+        assert not db.get(MarketInstrument, "1").active
+        assert db.scalar(select(Stock).where(Stock.ticker == "1000")).name == "N0"
+        assert len(refresh_universe(db, DAY, lambda d: source[:10])[0]) == 900
+        failing = Mock(side_effect=RuntimeError("offline"))
+        assert "沿用" in refresh_universe(db, DAY, failing)[1]
+        db.execute(delete(MarketInstrument))
+        db.commit()
+        with pytest.raises(ValueError, match="沒有可用"):
+            refresh_universe(db, DAY, failing)
+
+
+@pytest.mark.parametrize(
+    "change,expected",
+    [
+        ({"open": 0}, False),
+        ({"high": 9}, False),
+        ({"low": 12}, False),
+        ({"close": float("nan")}, False),
+        ({"volume": -1}, False),
+        ({"volume": 0}, True),
+    ],
+)
+def test_bar_validation(change, expected):
+    b = dict(open=10, high=12, low=9, close=11, volume=100)
+    b.update(change)
+    assert valid_ohlcv(b) == expected
+
+
+@pytest.mark.parametrize("lag", [0, 5, 6])
+def test_valid_quote_lag_zero_volume_and_engine_metrics(lag):
+    sample = bars(days=DATES if lag == 0 else DATES[:-lag])
+    if lag == 6:
+        with pytest.raises(ValueError, match="超過 5"):
+            evaluate_stock("1", "股票", "stock", [rule()], sample, DATES)
+    else:
+        result = evaluate_stock("1", "股票", "stock", [rule(), rule(2)], sample, DATES)
+        assert len(result.candidates) == 2
+        assert result.candidates[0]["older_quote"] == (lag > 0)
+        assert result.candidates[0]["volume"] == 0 and result.candidates[0]["turnover"] is None
+        assert result.candidates[0]["indicators"]["bollinger_mid_up.mid"] > 0
+        assert "月線上揚" in result.candidates[0]["reason"]
+
+
+def test_per_rule_insufficient_not_whole_stock():
+    result = evaluate_stock("1", "股票", "stock", [rule(), rule(2, "macd_positive")], bars(), DATES)
+    assert result.succeeded and result.insufficient and len(result.candidates) == 1
+    assert result.rules[2][0] == "insufficient_history"
+    assert required_days([rule(2, "macd_positive", {"long_period": 50})]) > required_days([rule()])
+
+
+def test_initialization_repeated_only_missing_ranges_and_no_implicit_scan(factory, monkeypatch):
+    calls = []
+
+    def sync(self, ticker, **kwargs):
+        calls.append((kwargs["start_date"], kwargs["end_date"]))
+        for b in bars(
+            ticker, [d for d in DATES if kwargs["start_date"] <= d <= kwargs["end_date"]]
+        ):
+            self._db.add(b)
+        self._db.commit()
+        return 1
+
+    monkeypatch.setattr(MarketDataService, "sync_daily_prices", sync)
+    with factory() as db:
+        sync_ranges(db, "1", DATES[:10], Mock())
+        sync_ranges(db, "1", DATES[:10], Mock())
+        sync_ranges(db, "1", DATES[:12], Mock())
+        assert calls == [(DATES[0], DATES[9]), (DATES[10], DATES[11])]
+        assert db.get(ScanCoverage, "1")
+    job = manager(factory)
+    job.start([1], kind="initialize", now=NOW)
+    job.close()
+    with factory() as db:
+        assert db.get(ScanTask, "initialize").status == "completed"
+        assert db.get(ScanTask, "scan") is None and db.get(ScanPublication, 1) is None
+    job.notifier.send_alert.assert_not_called()
+
+
+def test_invalid_source_never_overwrites_existing_or_retries(factory, respx_mock):
+    route = respx_mock.get("https://api.finmindtrade.com/api/v4/data").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": 200,
+                "data": [
+                    dict(date=DAY.isoformat(), open=0, max=12, min=9, close=11, Trading_Volume=0)
+                ],
+            },
+        )
+    )
+    # Both data calls return same mock; stub dividend parsing independently.
+    client = FinMindClient(before_request=Mock())
+    client.get_dividend_events = Mock(return_value=[])
+    with factory() as db:
+        db.add(bars(days=[DAY])[0])
+        db.commit()
+        with pytest.raises(ValueError, match="行情無效"):
+            MarketDataService(db, client).sync_daily_prices("1", start_date=DAY, end_date=DAY)
+        assert db.scalar(select(StockPriceDaily.close)) == 11
+        assert route.call_count == 1 and client.before_request.call_count == 1
+    route.mock(return_value=httpx.Response(200, json={"status": 402, "msg": "quota"}))
+    with factory() as db:
+        with pytest.raises(RuntimeError):
+            MarketDataService(db, client).sync_daily_prices("1", start_date=DAY, end_date=DAY)
+    assert route.call_count == 2
+
+
+def test_shared_limiter_paces_all_workers():
+    time = [0.0]
+    seen = []
+    limiter = RateLimiter(
+        4, clock=lambda: time[0], sleep=lambda seconds: time.__setitem__(0, time[0] + seconds)
+    )
+
+    def request():
+        limiter.acquire()
+        seen.append(time[0])
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        list(pool.map(lambda _: request(), range(10)))
+    assert seen == [15 * i for i in range(1, 11)]
+    with pytest.raises(ValueError):
+        Settings(market_scan_workers=0)
+
+
+def test_atomic_publication_per_rule_stale_unselected_removal_and_counts(factory):
+    job = manager(factory)
+    job.start([1, 2], now=NOW)
+    job.close()
+    with factory() as db:
+        assert len(list(db.scalars(select(ScanCandidate)))) == 4
+        old_batch = db.get(ScanPublication, 1).metadata_json["batchId"]
+    entered, release = Event(), Event()
+
+    def partial(factory, item, rules, *args):
+        entered.set()
+        assert release.wait(5)
+        if item[0] == "2":
+            return Outcome(
+                "2",
+                rules={1: ("insufficient_history", "不足")},
+                errors=[(1, "insufficient_history", "不足")],
+            )
+        return Outcome("1", rules={1: ("normal", None)})  # Success no longer matches.
+
+    job.worker = partial
+    try:
+        job.start([1], now=NOW)
+        assert entered.wait(5)
+        with factory() as db:
+            assert db.get(ScanPublication, 1).metadata_json["batchId"] == old_batch
+            assert len(list(db.scalars(select(ScanCandidate)))) == 4
+    finally:
+        release.set()
+        job.close()
+    with factory() as db:
+        candidates = list(db.scalars(select(ScanCandidate)))
+        assert len(candidates) == 2 and all(c.ticker == "2" for c in candidates)
+        assert {c.status for c in candidates} == {"stale", "insufficient_history"}
+        report = db.get(ScanPublication, 1).metadata_json
+        assert (
+            report["normalCount"] == 0 and report["succeeded"] == 1 and report["insufficient"] == 1
+        )
+        assert db.get(ScanSettings, 1).rule_ids == [1, 2]
+    assert "部分資料處理失敗" in job.notifier.send_alert.call_args.args[0]
+
+
+def test_publish_rollback_and_restart_keep_previous(factory):
+    job = manager(factory)
+    job.start([1], now=NOW)
+    job.close()
+    with factory() as db:
+        old = copy.deepcopy(db.get(ScanPublication, 1).metadata_json)
+        db.get(ScanTask, "scan").status = "running"
+        db.commit()
+        bad = success(factory, ("1", "stock", DAY), [rule()])
+        bad.candidates[0]["indicators"] = {"bad": object()}
+        with pytest.raises(StatementError):
+            publish(db, old["batchId"], [bad], old)
+        db.rollback()
+        assert db.get(ScanPublication, 1).metadata_json == old
+        assert len(list(db.scalars(select(ScanCandidate)))) == 2
+    job.recover()
+    with factory() as db:
+        assert db.get(ScanTask, "scan").status == "interrupted"
+        assert db.get(ScanPublication, 1).metadata_json == old
+
+
+def test_five_workers_sessions_and_mutual_exclusion_but_backtest_independent(factory):
+    barrier, entered, release, lock = Barrier(5), Event(), Event(), Lock()
+    active = peak = 0
+    seen = []
+
+    def worker(sessions, item, rules, *args):
+        nonlocal active, peak
+        with sessions() as db:
+            with lock:
+                active += 1
+                peak = max(peak, active)
+                seen.append(db)
+            entered.set()
+            assert release.wait(5)
+            if item[0] != "6":
+                barrier.wait(5)
+            with lock:
+                active -= 1
+        return success(sessions, item, rules)
+
+    job = manager(factory, worker)
+    job.universe = lambda *args: ([(str(i), "stock", DAY) for i in range(1, 7)], None)
+    try:
+        job.start([1], now=NOW)
+        assert entered.wait(5)
+        for kind in ("scan", "initialize"):
+            with pytest.raises(ScanBusy):
+                manager(factory).start([1], kind=kind, now=NOW)
+        from app.backtest.coordination import acquire
+
+        lease = acquire(factory)
+        assert lease is not None
+        lease.close()
+        job.recover()
+        with factory() as db:
+            assert db.get(ScanTask, "scan").status == "running"
+    finally:
+        release.set()
+        job.close()
+    assert peak == 5 and len({id(s) for s in seen}) == 6
+
+
+@pytest.mark.parametrize(
+    "hour,enabled,trading,expected",
+    [
+        (18, True, True, False),
+        (20, True, True, False),
+        (19, False, True, False),
+        (19, True, False, False),
+        (19, True, True, True),
+    ],
+)
+def test_schedule_timezone_trading_closures_disabled_no_catchup(
+    factory, hour, enabled, trading, expected
+):
+    with factory() as db:
+        db.get(ScanSettings, 1).enabled = enabled
+        db.commit()
+    job = manager(factory)
+    calendar = Mock()
+    calendar.is_trading_day.return_value = trading
+    run_daily_market_scan(NOW.replace(hour=hour).astimezone(ZoneInfo("UTC")), calendar, job)
+    job.close()
+    with factory() as db:
+        assert (db.get(ScanTask, "scan") is not None) == expected
+    if expected:
+        job.start = Mock()
+        run_daily_market_scan(NOW, calendar, job)
+        job.start.assert_not_called()
+
+
+def test_empty_auto_rules_skipped_keeps_candidates_manual_rejected(factory):
+    job = manager(factory)
+    job.start([1], now=NOW)
+    job.close()
+    with factory() as db:
+        db.get(ScanSettings, 1).rule_ids = []
+        db.commit()
+    with pytest.raises(ValueError):
+        job.start([], now=NOW)
+    job.start(source="automatic", now=NOW)
+    with factory() as db:
+        assert db.get(ScanTask, "scan").status == "skipped"
+        assert "未選擇戰法" in db.get(ScanTask, "scan").warnings
+        assert len(list(db.scalars(select(ScanCandidate)))) == 2
+
+
+@pytest.mark.parametrize(
+    "mode,status,label",
+    [
+        ("success", "completed", "掃描完成"),
+        ("partial", "partial_completed", "部分資料處理失敗"),
+        ("failed", "failed", "掃描失敗"),
+    ],
+)
+def test_task_statuses_notifications_failure_isolation_and_holiday_manual(
+    factory, mode, status, label
+):
+    def worker(factory, item, rules, *args):
+        if mode == "failed" or (mode == "partial" and item[0] == "2"):
+            raise RuntimeError("unavailable")
+        return success(factory, item, rules)
+
+    job = manager(factory, worker)
+    job.notifier.send_alert.side_effect = RuntimeError("secret URL must not leak")
+    job.start([1], now=NOW.replace(day=11))
+    job.close()  # Sunday is permitted manually.
+    with factory() as db:
+        task = db.get(ScanTask, "scan")
+        assert task.status == status and task.processed == 2
+        assert any("Telegram" in w for w in task.warnings)
+        assert not any("secret" in w for w in task.warnings)
+    assert label in job.notifier.send_alert.call_args.args[0]
+
+
+def test_api_pagination_filters_actual_turnover_metrics_and_bounds(factory, monkeypatch):
+    job = manager(factory)
+    monkeypatch.setattr("app.market_scan.router.manager", job)
+    job.start([1, 2], now=NOW)
+    job.close()
+    with factory() as db:
+        base = db.scalar(select(ScanCandidate))
+        for i in range(60):
+            db.add(
+                ScanCandidate(
+                    ticker=f"X{i:02}",
+                    stock_name="測試ETF",
+                    kind="etf",
+                    rule_id=1,
+                    rule_name="戰法1",
+                    batch_id=base.batch_id,
+                    status="normal",
+                    reason="符合",
+                    indicators={},
+                    close=i + 1,
+                    price_date=DAY,
+                    volume=i,
+                    turnover=1000 + i,
+                    scanned_at=NOW.replace(tzinfo=None),
+                    older_quote=False,
+                )
+            )
+        db.flush()
+        for c in db.scalars(select(ScanCandidate)):
+            if c.ticker.startswith("X"):
+                db.add(
+                    CandidateIndicator(candidate_id=c.id, name="test.value", value=float(c.close))
+                )
+        db.commit()
+
+    def dependency():
+        with factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = dependency
+    try:
+        with TestClient(app) as client:
+            result = client.get("/market-scan/candidates").json()
+            assert result["total"] == 64 and len(result["items"]) == 50
+            assert len(client.get("/market-scan/candidates?page=2").json()["items"]) == 14
+            result = client.get(
+                "/market-scan/candidates?kind=etf&search=測試&minVolume=59&sort=turnover&direction=desc"
+            ).json()
+            assert result["total"] == 1 and result["items"][0]["ticker"] == "X59"
+            assert (
+                client.get(
+                    "/market-scan/candidates?indicator=test.value&indicatorMin=60&sort=indicator"
+                ).json()["total"]
+                == 1
+            )
+            assert client.get("/market-scan/candidates?minTurnover=0").json()["total"] == 60
+            assert (
+                client.get(
+                    "/market-scan/candidates?priceDate=2026-10-12&minPrice=59&maxPrice=60"
+                ).json()["total"]
+                == 2
+            )
+            for query in (
+                "sort=sql",
+                "page=10001",
+                "pageSize=500",
+                "sort=indicator",
+                "minPrice=nan",
+            ):
+                assert client.get("/market-scan/candidates?" + query).status_code == 422
+            report = client.get("/market-scan/summary").json()
+            assert report["succeeded"] == 2 and report["normalCount"] == 4
+            assert client.post("/market-scan/run", json={"ruleIds": []}).status_code == 422
+            assert (
+                client.put(
+                    "/market-scan/settings", json={"enabled": False, "ruleIds": []}
+                ).status_code
+                == 200
+            )
+            assert client.get("/market-scan/errors").json()["total"] == 0
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_existing_complete_prices_only_supplement_dividend_coverage(factory, monkeypatch):
+    with factory() as db:
+        db.add_all(bars())
+        db.commit()
+        sync = Mock(return_value=0)
+        monkeypatch.setattr(MarketDataService, "sync_daily_prices", sync)
+        sync_ranges(db, "1", DATES, Mock())
+        assert sync.call_count == 1 and sync.call_args.kwargs["fetch_prices"] is False
+        sync_ranges(db, "1", DATES, Mock())
+        assert sync.call_count == 1
+
+
+def test_scan_never_backfills_history_and_caches_source_confirmed_absence(factory, monkeypatch):
+    from app.market_scan.data import prepare
+
+    with factory() as db:
+        sync = Mock(return_value=0)
+        monkeypatch.setattr(MarketDataService, "sync_daily_prices", sync)
+        prepare(db, "1", date(2000, 1, 1), "scan", [rule(2, "macd_positive")], DATES, Mock())
+        assert sync.call_args.kwargs["start_date"] == DATES[-6]
+        prepare(db, "1", date(2000, 1, 1), "scan", [rule(2, "macd_positive")], DATES, Mock())
+        assert sync.call_count == 1
+
+
+def test_current_month_without_trades_still_allows_holiday_manual_baseline(
+    factory, respx_mock, monkeypatch
+):
+    from app.market_scan.service import load_market_trading_dates
+
+    monkeypatch.setattr("app.backtest.data.taipei_today", lambda: date(2026, 10, 1))
+    respx_mock.get(
+        "https://www.twse.com.tw/exchangeReport/FMTQIK",
+        params={"response": "json", "date": "20260901"},
+    ).mock(return_value=httpx.Response(200, json={"stat": "OK", "data": [["115/09/30"]]}))
+    respx_mock.get(
+        "https://www.twse.com.tw/exchangeReport/FMTQIK",
+        params={"response": "json", "date": "20261001"},
+    ).mock(return_value=httpx.Response(200, json={"stat": "很抱歉，沒有符合條件的資料!"}))
+    assert load_market_trading_dates(factory, date(2026, 9, 1), date(2026, 10, 1)) == [
+        date(2026, 9, 30)
+    ]
+
+
+def test_schedule_calendar_failure_is_persisted_and_not_retried(factory):
+    job = manager(factory)
+    calendar = Mock()
+    calendar.is_trading_day.side_effect = RuntimeError("offline")
+    run_daily_market_scan(NOW, calendar, job)
+    run_daily_market_scan(NOW, calendar, job)
+    assert calendar.is_trading_day.call_count == 1
+    with factory() as db:
+        task = db.get(ScanTask, "scan")
+        assert task.status == "failed" and task.source == "automatic"
+        assert db.get(ScanPublication, 1) is None
+
+
+def test_disabled_rule_in_saved_settings_is_skipped_without_poisoning_other_rules(factory):
+    job = manager(factory)
+    with factory() as db:
+        db.get(WatchRule, 2).is_enabled = False
+        db.commit()
+    job.start(source="automatic", now=NOW)
+    job.close()
+    with factory() as db:
+        assert db.get(ScanTask, "scan").rules == [{"id": 1, "name": "戰法1"}]
+
+
+def test_api_conflict_settings_independent_and_refresh_never_syncs(factory, monkeypatch):
+    release, entered = Event(), Event()
+
+    def worker(*args):
+        entered.set()
+        assert release.wait(5)
+        return success(*args)
+
+    job = manager(factory, worker)
+    monkeypatch.setattr("app.market_scan.router.manager", job)
+
+    def dependency():
+        with factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = dependency
+    try:
+        with TestClient(app) as client:
+            assert client.post("/market-scan/run", json={"ruleIds": [1]}).status_code == 202
+            assert entered.wait(5)
+            assert client.post("/market-scan/initialize", json={"ruleIds": [1]}).status_code == 409
+            assert client.post("/market-scan/run", json={"ruleIds": [1]}).status_code == 409
+            assert client.get("/market-scan/settings").json()["ruleIds"] == [1, 2]
+            assert (
+                client.put(
+                    "/market-scan/settings", json={"enabled": False, "ruleIds": [2]}
+                ).status_code
+                == 200
+            )
+            # Disabling future schedules doesn't cancel this job.
+            assert client.get("/market-scan/tasks").json()["scan"]["status"] == "running"
+            release.set()
+            job.close()
+            job.universe = Mock(side_effect=AssertionError("GET must not refresh universe"))
+            sync = Mock(side_effect=AssertionError("GET must not sync FinMind"))
+            monkeypatch.setattr(MarketDataService, "sync_daily_prices", sync)
+            for endpoint in ("tasks", "settings", "summary", "candidates", "errors", "indicators"):
+                assert client.get("/market-scan/" + endpoint).status_code == 200
+            sync.assert_not_called()
+            job.universe.assert_not_called()
+    finally:
+        release.set()
+        job.close()
+        app.dependency_overrides.clear()
+
+
+def test_one_rule_failure_preserves_only_that_old_pair_and_next_auto_replaces_manual(factory):
+    job = manager(factory)
+    job.start([1, 2], now=NOW)
+    job.close()
+
+    def partial(factory, item, rules, *args):
+        good = success(factory, item, [rules[0]])
+        good.rules[2] = ("insufficient_history", "不足")
+        return good
+
+    job.worker = partial
+    job.start([1, 2], now=NOW)
+    job.close()
+    with factory() as db:
+        rows = list(db.scalars(select(ScanCandidate)))
+        assert {r.status for r in rows if r.rule_id == 1} == {"normal"}
+        assert {r.status for r in rows if r.rule_id == 2} == {"insufficient_history"}
+        db.get(ScanSettings, 1).rule_ids = [2]
+        db.commit()
+    job.worker = success
+    job.start(source="automatic", now=NOW)
+    job.close()
+    with factory() as db:
+        rows = list(db.scalars(select(ScanCandidate)))
+        assert len(rows) == 2 and all(r.rule_id == 2 and r.status == "normal" for r in rows)
+        assert db.get(ScanPublication, 1).metadata_json["source"] == "automatic"
+
+
+@pytest.mark.parametrize("all_fail,expected", [(False, "partial_completed"), (True, "failed")])
+def test_initialization_partial_and_failure_no_scan_or_notification(factory, all_fail, expected):
+    def worker(factory, item, rules, *args):
+        if all_fail or item[0] == "2":
+            raise RuntimeError("來源失敗")
+        return success(factory, item, rules)
+
+    job = manager(factory, worker)
+    job.start([1], kind="initialize", now=NOW)
+    job.close()
+    with factory() as db:
+        task = db.get(ScanTask, "initialize")
+        assert task.status == expected and task.processed == 2
+        assert db.get(ScanTask, "scan") is None
+        assert db.get(ScanPublication, 1) is None
+    job.notifier.send_alert.assert_not_called()
+
+
+def test_dividend_record_date_overlap_filters_actual_ex_dates(factory, monkeypatch):
+    from app.market_data.repository import MarketDataRepository
+
+    client = Mock()
+    client.get_daily_price.return_value = []
+    actual = dict(
+        ex_dividend_date=DAY,
+        cash_dividend=1,
+        stock_dividend_ratio=0,
+        cash_capital_increase_ratio=0,
+        cash_capital_increase_price=0,
+    )
+    client.get_dividend_events.return_value = [
+        actual,
+        dict(actual, ex_dividend_date=DAY + timedelta(days=3)),
+    ]
+    saved = []
+    monkeypatch.setattr(
+        MarketDataRepository,
+        "upsert_dividend_events",
+        lambda self, ticker, events: saved.extend(events),
+    )
+    with factory() as db:
+        MarketDataService(db, client).sync_daily_prices("1", start_date=DAY, end_date=DAY)
+    client.get_dividend_events.assert_called_once_with(
+        "1", start_date=DAY - timedelta(days=31), end_date=DAY + timedelta(days=31)
+    )
+    assert saved == [actual]

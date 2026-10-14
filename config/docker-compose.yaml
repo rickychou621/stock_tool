@@ -19,6 +19,9 @@ services:
       context: ../backend
       dockerfile: ../config/docker/backend.Dockerfile
     image: stock_tool_backend
+    # Stage-three FinMind budget is process-wide: exactly one backend instance.
+    deploy:
+      replicas: 1
     ports:
       - "8000:8000"   # 直接測試API用，不經過nginx
     env_file:

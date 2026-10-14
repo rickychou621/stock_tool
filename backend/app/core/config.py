@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,6 +26,8 @@ class Settings(BaseSettings):
     # 篩選/排程參數：可隨時調整，不需改程式碼
     screening_interval_minutes: int = 5
     candidate_pool_limit: int = 10
+    market_scan_workers: int = Field(default=5, gt=0, le=32)
+    finmind_scan_requests_per_minute: int = Field(default=4, gt=0, le=600)
 
     @property
     def database_url(self) -> str:

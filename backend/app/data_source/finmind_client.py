@@ -13,10 +13,15 @@ import httpx
 FINMIND_BASE_URL = "https://api.finmindtrade.com/api/v4/data"
 
 
-def _fetch(dataset: str, ticker: str, start_date: date | None = None) -> list[dict]:
+def _fetch(
+    dataset: str, ticker: str, start_date: date | None = None, end_date: date | None = None
+) -> list[dict]:
     params: dict[str, str] = {"dataset": dataset, "data_id": ticker}
     if start_date:
         params["start_date"] = start_date.isoformat()
+
+    if end_date:
+        params["end_date"] = end_date.isoformat()
 
     response = httpx.get(FINMIND_BASE_URL, params=params, timeout=15)
     # FinMind的錯誤(例如免費額度限制)一樣會回傳可解析的JSON、只是status不是200，
@@ -30,9 +35,15 @@ def _fetch(dataset: str, ticker: str, start_date: date | None = None) -> list[di
 
 
 class FinMindClient:
-    def get_daily_price(self, ticker: str, days: int = 180) -> list[dict]:
-        start_date = date.today() - timedelta(days=days)
-        rows = _fetch("TaiwanStockPrice", ticker, start_date)
+    def __init__(self, before_request=None):
+        self.before_request = before_request or (lambda: None)
+
+    def get_daily_price(
+        self, ticker: str, days: int = 180, *, start_date=None, end_date=None
+    ) -> list[dict]:
+        start_date = start_date or date.today() - timedelta(days=days)
+        self.before_request()
+        rows = _fetch("TaiwanStockPrice", ticker, start_date, end_date)
 
         return [
             {
@@ -42,15 +53,19 @@ class FinMindClient:
                 "low": row["min"],
                 "close": row["close"],
                 "volume": int(row["Trading_Volume"]),
+                "turnover": row.get("Trading_money"),
             }
             for row in rows
         ]
 
-    def get_dividend_events(self, ticker: str, days: int = 730) -> list[dict]:
+    def get_dividend_events(
+        self, ticker: str, days: int = 730, *, start_date=None, end_date=None
+    ) -> list[dict]:
         """抓股利/增資事件，用來反推還原股價(見 market_data/price_adjustment.py)。
         預設抓過去2年，涵蓋大部分股票一年一次或一年多次的配息週期。"""
-        start_date = date.today() - timedelta(days=days)
-        rows = _fetch("TaiwanStockDividend", ticker, start_date)
+        start_date = start_date or date.today() - timedelta(days=days)
+        self.before_request()
+        rows = _fetch("TaiwanStockDividend", ticker, start_date, end_date)
 
         events = []
         for row in rows:

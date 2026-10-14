@@ -29,4 +29,4 @@ class VolumeSpikeCondition(Condition):
         ratio = latest_volume / avg_volume
         is_met = ratio > multiplier
         reason = f"今日成交量{latest_volume}，近{lookback}日均量{avg_volume:.0f}的{ratio:.1f}倍"
-        return ConditionResult(is_met, reason)
+        return ConditionResult(is_met, reason, indicators={"ratio": ratio, "average": avg_volume})

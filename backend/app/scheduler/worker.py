@@ -1,0 +1,110 @@
+"""One stock per independent session; retain valid results when preparation fails."""
+
+import math
+from dataclasses import asdict
+from datetime import date
+
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
+from app.market_data.models import Stock
+from app.market_data.repository import MarketDataRepository
+from app.market_data.service import MarketDataService
+from app.rules.evaluation import RuleEvaluationService
+from app.rules.models import WatchRule
+from app.rules.preparation import history_days
+from app.rules.schemas import RuleEvaluationSchema
+from app.scheduler.service import utcnow
+from app.watchlist.evaluation import fingerprint
+from app.watchlist.models import HoldingsWatchlist, WatchlistEvaluation
+
+
+def validate_bars(bars, day: date):
+    if not bars or bars[-1].trade_date != day:
+        raise ValueError(f"最新日K不是本次交易日 {day}，可能尚未更新或個股停牌")
+    for bar in bars:
+        for prefix in ("", "adj_"):
+            prices = [getattr(bar, prefix + key) for key in ("open", "high", "low", "close")]
+            if any(
+                value is None or not math.isfinite(float(value)) or value <= 0 for value in prices
+            ):
+                raise ValueError(f"{bar.trade_date} {prefix}OHLC 必須為有效正數")
+            opening, high, low, close = prices
+            if not low <= min(opening, close) <= max(opening, close) <= high:
+                raise ValueError(f"{bar.trade_date} {prefix}OHLC 高低價關係錯誤")
+        if bar.volume is None or not math.isfinite(float(bar.volume)) or bar.volume < 0:
+            raise ValueError(f"{bar.trade_date} 成交量無效")
+
+
+def invalidate(db, item_id, rule_ids):
+    for saved in db.scalars(
+        select(WatchlistEvaluation).where(
+            WatchlistEvaluation.item_id == item_id, WatchlistEvaluation.rule_id.in_(rule_ids)
+        )
+    ):
+        saved.data_version = -1
+    db.commit()
+
+
+def process_stock(session_factory, item_id: int, ticker: str, rule_ids: list[int], day: date):
+    with session_factory() as db:
+        rules = list(
+            db.scalars(
+                select(WatchRule)
+                .options(selectinload(WatchRule.conditions))
+                .where(WatchRule.id.in_(rule_ids), WatchRule.is_enabled.is_(True))
+            )
+        )
+        failures = []
+        available = []
+        days = 365 if not rules else 180
+        for rule in rules:
+            try:
+                if not rule.conditions:
+                    raise ValueError("戰法未設定條件")
+                days = max(days, history_days(rule))
+                available.append(rule)
+            except Exception as exc:
+                failures.append(f"{rule.name}：無法準備戰法（{exc}）")
+                invalidate(db, item_id, [rule.id])
+        try:
+            if not db.get(HoldingsWatchlist, item_id):
+                raise ValueError("觀察清單項目已移除")
+            if MarketDataService(db).sync_daily_prices(ticker, days=days) == 0:
+                raise ValueError("FinMind 未回傳行情")
+            validate_bars(MarketDataRepository(db).get_all_bars(ticker), day)
+            stock = db.scalar(select(Stock).where(Stock.ticker == ticker))
+            if stock is None:
+                raise ValueError("找不到股票主檔")
+        except Exception as exc:
+            db.rollback()
+            invalidate(db, item_id, rule_ids)
+            return failures + [f"行情更新／驗證失敗：{exc}"]
+        for rule in available:
+            try:
+                result = RuleEvaluationService(db).evaluate(rule, ticker)
+                if result.status in ("error", "insufficient_data") or any(
+                    not condition.data_sufficient for condition in result.condition_results
+                ):
+                    raise ValueError("；".join(c.reason for c in result.condition_results))
+                saved = db.scalar(
+                    select(WatchlistEvaluation).where(
+                        WatchlistEvaluation.item_id == item_id,
+                        WatchlistEvaluation.rule_id == rule.id,
+                    )
+                )
+                if saved is None:
+                    saved = WatchlistEvaluation(item_id=item_id, rule_id=rule.id)
+                    db.add(saved)
+                saved.result = RuleEvaluationSchema(**asdict(result)).model_dump(
+                    mode="json", by_alias=True
+                )
+                saved.data_version = stock.data_version
+                saved.rule_fingerprint = fingerprint(rule)
+                saved.evaluated_at = utcnow()
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                invalidate(db, item_id, [rule.id])
+                failures.append(f"{rule.name}：{exc}")
+        return failures
