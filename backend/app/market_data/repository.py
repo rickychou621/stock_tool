@@ -1,3 +1,5 @@
+from decimal import ROUND_HALF_UP, Decimal
+
 from sqlalchemy import exists, func, select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.orm import Session
@@ -91,11 +93,41 @@ class MarketDataRepository:
             values = adjusted_by_date.get(bar.trade_date)
             if values is None:
                 continue
-            bar.adj_open = values["open"]
-            bar.adj_high = values["high"]
-            bar.adj_low = values["low"]
-            bar.adj_close = values["close"]
+            for name in ("open", "high", "low", "close"):
+                # Match NUMERIC(10, 2); unrounded floats otherwise dirty unchanged
+                # history on every backfill day and hold unnecessary row locks.
+                value = Decimal(str(values[name])).quantize(Decimal("0.01"), ROUND_HALF_UP)
+                if getattr(bar, f"adj_{name}") != value:
+                    setattr(bar, f"adj_{name}", value)
         if self._commit:
             self._db.commit()
         else:
             self._db.flush()
+
+    def upsert_market_bars(self, rows):
+        """Atomic caller-owned write; bounded statements for a complete market day."""
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        for offset in range(0, len(rows), 400):
+            chunk = rows[offset : offset + 400]
+            if self._db.bind.dialect.name == "sqlite":
+                stmt = sqlite_insert(StockPriceDaily).values(chunk)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["ticker", "trade_date"],
+                    set_={
+                        k: getattr(stmt.excluded, k)
+                        for k in chunk[0]
+                        if k not in ("ticker", "trade_date")
+                    },
+                )
+            else:
+                stmt = mysql_insert(StockPriceDaily).values(chunk)
+                stmt = stmt.on_duplicate_key_update(
+                    **{
+                        k: getattr(stmt.inserted, k)
+                        for k in chunk[0]
+                        if k not in ("ticker", "trade_date")
+                    }
+                )
+            self._db.execute(stmt)
+        self._db.flush()

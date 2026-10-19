@@ -1,14 +1,10 @@
-"""FinMind API 封裝(日K股價)。
-
-FinMind的 TaiwanStockPriceAdj(還原股價)實測目前需要付費會員才能查詢
-(免費/匿名請求會被拒絕:「Your level is free. Please update your user level.」)，
-所以這裡改用 TaiwanStockPrice(未還原除權息的原始股價)，免費且不需要申請token。
-還原股價之後若要補上，可以走「自己拿股利資料回推」的方案，或申請FinMind付費方案。
-"""
+"""FinMind 原始股價與股利；token 以 Authorization header 傳送。"""
 
 from datetime import date, timedelta
 
 import httpx
+
+from app.core.config import get_settings
 
 FINMIND_BASE_URL = "https://api.finmindtrade.com/api/v4/data"
 
@@ -23,13 +19,21 @@ def _fetch(
     if end_date:
         params["end_date"] = end_date.isoformat()
 
-    response = httpx.get(FINMIND_BASE_URL, params=params, timeout=15)
-    # FinMind的錯誤(例如免費額度限制)一樣會回傳可解析的JSON、只是status不是200，
-    # 不能只靠HTTP status code判斷，所以這裡不呼叫raise_for_status()。
-    payload = response.json()
-
-    if payload.get("status") != 200:
-        raise RuntimeError(f"FinMind回應錯誤：{payload.get('msg')}")
+    token = get_settings().finmind_api_token.strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        response = httpx.get(FINMIND_BASE_URL, params=params, headers=headers, timeout=15)
+        payload = response.json()
+    except Exception:
+        raise RuntimeError("FinMind回應錯誤：連線或資料格式異常") from None
+    if (
+        response.is_error
+        or not isinstance(payload, dict)
+        or payload.get("status") != 200
+        or not isinstance(payload.get("data"), list)
+    ):
+        # Source messages may echo credentials. Never expose arbitrary response text.
+        raise RuntimeError("FinMind回應錯誤：來源拒絕請求，請確認權限或額度")
 
     return payload["data"]
 

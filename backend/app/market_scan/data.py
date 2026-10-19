@@ -108,9 +108,5 @@ def sync_ranges(db, ticker, days, limiter):
 def prepare(db, ticker, listed_on, kind, rules, dates, limiter):
     baseline = dates[-1]
     start = max(listed_on, baseline - timedelta(days=required_days(rules)))
-    requested = [d for d in dates if d >= start]
-    if kind == "scan":
-        # Only the baseline and previous five sessions; never fill historical lookback here.
-        requested = [d for d in dates[-6:] if d >= listed_on]
-    sync_ranges(db, ticker, requested, limiter)
+    # The coordinator has already synchronized the whole market by date.
     return load_bars(db, ticker, start, baseline)

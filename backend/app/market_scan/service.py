@@ -15,11 +15,13 @@ from app.backtest.data import load_trading_dates
 from app.core.config import get_settings
 from app.core.db import SessionLocal
 from app.data_source.notifier import TelegramNotifier
+from app.market_scan.batch_data import synchronize
 from app.market_scan.coordination import acquire
 from app.market_scan.data import required_days
 from app.market_scan.models import ScanError, ScanSettings, ScanTask
 from app.market_scan.publication import publish
 from app.market_scan.rate_limit import RateLimiter
+from app.market_scan.signal_tracking import backfill
 from app.market_scan.universe import refresh_universe
 from app.market_scan.worker import Outcome, process_stock
 from app.rules.models import WatchRule
@@ -93,6 +95,7 @@ class MarketScanManager:
         worker=process_stock,
         notifier=None,
         settings=None,
+        batch_prepare=synchronize,
     ):
         self.factory, self.calendar, self.universe, self.worker = (
             factory,
@@ -100,12 +103,15 @@ class MarketScanManager:
             universe,
             worker,
         )
+        self.batch_prepare = batch_prepare
         self.settings = settings or get_settings()
         self.notifier = notifier or TelegramNotifier(self.settings)
         self.limiter = RateLimiter(self.settings.finmind_scan_requests_per_minute)
         self.executor = None
 
-    def start(self, rule_ids=None, *, kind="scan", source="manual", now=None):
+    def start(self, rule_ids=None, *, kind="scan", source="manual", now=None, mode="prices"):
+        if mode not in ("prices", "dividends"):
+            raise ValueError("初始化模式無效")
         lease = acquire(self.factory)
         if lease is None:
             raise ScanBusy("初始化或全市場掃描正在執行，請等候完成")
@@ -166,14 +172,14 @@ class MarketScanManager:
             self.executor = ThreadPoolExecutor(
                 max_workers=1, thread_name_prefix="market-coordinator"
             )
-            self.executor.submit(self._run, batch_id, kind, source, rules, now, lease)
+            self.executor.submit(self._run, batch_id, kind, source, rules, now, lease, mode)
             lease = None
             return batch_id
         finally:
             if lease is not None:
                 lease.close()
 
-    def _run(self, batch_id, kind, source, rules, now, lease):
+    def _run(self, batch_id, kind, source, rules, now, lease, mode):
         try:
             cutoff = now.astimezone(TZ).date()
             if now.astimezone(TZ).hour < 18:
@@ -190,6 +196,44 @@ class MarketScanManager:
                 task.total, task.baseline = len(instruments), dates[-1]
                 if warning:
                     task.warnings = [*task.warnings, warning]
+                db.commit()
+
+            def progress(message):
+                lease.verify()
+                with self.factory() as db:
+                    task = db.get(ScanTask, kind)
+                    task.warnings = [w for w in task.warnings if not w.startswith("批次行情 ")]
+                    task.warnings = [*task.warnings, message]
+                    db.commit()
+
+            warnings, errors = self.batch_prepare(
+                self.factory,
+                instruments,
+                rules,
+                kind,
+                dates,
+                self.limiter,
+                lease.verify,
+                progress=progress,
+                mode=mode,
+            )
+            lease.verify()
+            with self.factory() as db:
+                task = db.get(ScanTask, kind)
+                task.warnings = [w for w in task.warnings if not w.startswith("批次行情 ")]
+                task.warnings = [*task.warnings, *warnings]
+                db.add_all(
+                    [
+                        ScanError(
+                            kind=kind,
+                            batch_id=batch_id,
+                            ticker=ticker,
+                            status="warning",
+                            reason=reason[:1000],
+                        )
+                        for ticker, reason in errors
+                    ]
+                )
                 db.commit()
             outcomes = []
             with ThreadPoolExecutor(
@@ -236,6 +280,12 @@ class MarketScanManager:
                         db.commit()
             lease.verify()
             status, finished = terminal(outcomes), datetime.utcnow()
+            if (
+                kind == "initialize"
+                and status == "completed"
+                and (errors or any("失敗" in warning for warning in warnings))
+            ):
+                status = "partial_completed"
             with self.factory() as db:
                 task = db.get(ScanTask, kind)
                 if kind == "scan":
@@ -253,6 +303,17 @@ class MarketScanManager:
                         warnings=task.warnings,
                     )
                     publish(db, batch_id, outcomes, metadata)
+                    try:
+                        backfill(self.factory, dates[-1], lease.verify)
+                    except Exception as exc:
+                        # Publication has committed: tracking failure cannot undo it.
+                        db.rollback()
+                        task = db.get(ScanTask, kind)
+                        task.warnings = [
+                            *task.warnings,
+                            f"績效回填失敗（{type(exc).__name__}），下次掃描再補",
+                        ]
+                        db.commit()
                 else:
                     task.status, task.finished_at = status, finished
                     db.commit()

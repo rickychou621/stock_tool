@@ -32,7 +32,7 @@ class Stock(Base):
 
 
 class StockPriceDaily(Base):
-    """日K(來源:FinMind TaiwanStockPrice，未還原的原始成交價)。
+    """日K(來源:FinMind TaiwanStockPrice／TWSE MI_INDEX，未還原成交價)。
     adj_*欄位是自己用股利事件(見StockDividendEvent)反推的還原股價，
     圖表/技術指標一律應該用adj_*欄位，raw的open/high/low/close保留原始成交價當歷史紀錄。"""
 
@@ -41,7 +41,7 @@ class StockPriceDaily(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     ticker: Mapped[str] = mapped_column(String(10), ForeignKey("stocks.ticker"), index=True)
-    trade_date: Mapped[date] = mapped_column(Date)
+    trade_date: Mapped[date] = mapped_column(Date, index=True)
     open: Mapped[float] = mapped_column(Numeric(10, 2))
     high: Mapped[float] = mapped_column(Numeric(10, 2))
     low: Mapped[float] = mapped_column(Numeric(10, 2))

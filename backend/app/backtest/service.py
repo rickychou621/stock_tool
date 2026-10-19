@@ -10,13 +10,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import defer, selectinload
 
 from app.backtest.coordination import acquire
+from app.backtest.costs_benchmark import benchmark_return, enrich, load_benchmark
 from app.backtest.data import load_trading_dates, prepare_data
 from app.backtest.models import BacktestResult, BacktestTask
 from app.backtest.simulation import metrics, simulate
+from app.core.config import get_settings
 from app.core.db import SessionLocal
 from app.market_data.models import Stock
+from app.market_scan.models import MarketInstrument
 from app.rules.models import WatchRule
 from app.rules.preparation import history_days
+from app.trading_costs import TradingCosts
 from app.watchlist.models import HoldingsWatchlist
 
 logger = logging.getLogger(__name__)
@@ -71,8 +75,13 @@ class BacktestBusy(ValueError):
 
 class BacktestManager:
     def __init__(
-        self, session_factory=SessionLocal, calendar=load_trading_dates, worker=process_stock
+        self,
+        session_factory=SessionLocal,
+        calendar=load_trading_dates,
+        worker=process_stock,
+        benchmark_loader=load_benchmark,
     ):
+        self.benchmark_loader = benchmark_loader
         self.sessions = session_factory
         self.calendar = calendar
         self.worker = worker
@@ -157,6 +166,9 @@ class BacktestManager:
                         succeeded=0,
                         failed=0,
                         errors=[],
+                        context_json={
+                            "costSnapshot": TradingCosts.from_settings(get_settings()).snapshot()
+                        },
                     )
                 )
                 for row in db.scalars(
@@ -207,7 +219,17 @@ class BacktestManager:
                 raise ValueError("回測期間沒有可確認的交易日")
             end = in_window[-1]
             with self.sessions() as db:
-                db.get(BacktestTask, 1).end_date = end
+                task = db.get(BacktestTask, 1)
+                task.end_date = end
+                costs = task.context_json["costSnapshot"]
+                kinds = dict(
+                    db.execute(select(MarketInstrument.ticker, MarketInstrument.kind)).all()
+                )
+                db.commit()
+            benchmark = self.benchmark_loader(self.sessions, warm_start, end, dates)
+            with self.sessions() as db:
+                task = db.get(BacktestTask, 1)
+                task.context_json = {"costSnapshot": costs, "benchmark": benchmark}
                 db.commit()
             with ThreadPoolExecutor(max_workers=3, thread_name_prefix="backtest-stock") as pool:
                 futures = {
@@ -231,6 +253,7 @@ class BacktestManager:
                             raise ValueError("回測結果不完整，未取代舊結果")
                         with self.sessions() as db:
                             for rule_id, name, payload in results:
+                                enrich(payload, costs, kinds.get(item.ticker), benchmark)
                                 row = db.scalar(
                                     select(BacktestResult).where(
                                         BacktestResult.ticker == item.ticker,
@@ -256,6 +279,8 @@ class BacktestManager:
                                             "entryDate",
                                             "exitDate",
                                             "returnRate",
+                                            "grossReturnRate",
+                                            "excessReturn",
                                             "ticker",
                                             "pendingSide",
                                         )
@@ -289,6 +314,11 @@ class BacktestManager:
             lease.close()
 
 
+def average_excess(trades):
+    values = [t["excessReturn"] for t in trades if t.get("excessReturn") is not None]
+    return sum(values) / len(values) if values else None
+
+
 def read_report(db):
     task = db.get(BacktestTask, 1)
     if task is None:
@@ -306,6 +336,7 @@ def read_report(db):
     for row in rows:
         stale = row.stale or row.batch_id != task.batch_id
         p = row.summary
+        legacy = p.get("schemaVersion") != 2
         stocks.append(
             dict(
                 id=row.id,
@@ -318,7 +349,14 @@ def read_report(db):
                 calculatedAt=row.calculated_at.replace(tzinfo=UTC).isoformat(),
                 actualStart=p["actualStart"],
                 actualEnd=p["actualEnd"],
-                metrics=p["metrics"],
+                metrics=metrics([]) if legacy else p["metrics"],
+                needsRerun=legacy,
+                grossMetrics=p.get("grossMetrics", p["metrics"]),
+                costSnapshot=p.get("costSnapshot"),
+                averageExcessReturn=p.get("averageExcessReturn"),
+                benchmarkBuyHoldReturn=p.get("benchmarkBuyHoldReturn"),
+                benchmarkReason=p.get("benchmarkReason"),
+                warnings=p.get("warnings", []),
                 openCount=sum(t["status"] == "open" for t in p["trades"]),
                 unfilledCount=sum(
                     t["status"] == "unfilled" or bool(t.get("pendingSide")) for t in p["trades"]
@@ -326,7 +364,7 @@ def read_report(db):
                 skippedSessions=p.get("skippedSessions", 0),
             )
         )
-        if not stale:
+        if not stale and not legacy:
             group = grouped.setdefault(
                 row.rule_id,
                 dict(
@@ -348,6 +386,16 @@ def read_report(db):
             {
                 **{k: v for k, v in group.items() if k != "trades"},
                 "metrics": metrics(group["trades"]),
+                "grossMetrics": metrics(
+                    [{**t, "returnRate": t["grossReturnRate"]} for t in group["trades"]]
+                ),
+                "averageExcessReturn": average_excess(group["trades"]),
+                "benchmarkBuyHoldReturn": benchmark_return(
+                    (task.context_json or {}).get("benchmark", {}),
+                    group["actualStart"],
+                    group["actualEnd"],
+                    "close",
+                ),
             }
         )
     return dict(
@@ -366,6 +414,7 @@ def read_report(db):
             succeeded=task.succeeded,
             failed=task.failed,
             errors=task.errors,
+            costSnapshot=(task.context_json or {}).get("costSnapshot"),
         ),
         overall=overall,
         stocks=stocks,

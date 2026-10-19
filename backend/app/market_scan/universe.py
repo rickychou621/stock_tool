@@ -4,9 +4,9 @@ from collections import Counter
 from datetime import date
 from html.parser import HTMLParser
 
-import httpx
 from sqlalchemy import select
 
+from app.data_source import twse_client
 from app.market_data.models import Stock
 from app.market_scan.models import MarketInstrument
 
@@ -68,7 +68,7 @@ def parse_universe(html, today):
 
 
 def fetch_universe(today):
-    response = httpx.get(URL, timeout=40)
+    response = twse_client.get(URL, timeout=40)
     response.raise_for_status()
     return parse_universe(response.content.decode("cp950"), today)
 

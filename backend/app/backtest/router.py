@@ -44,6 +44,10 @@ def detail(
         raise HTTPException(409, "結果已更新，請重新整理後查看明細")
     payload = row.payload
     return dict(
+        needsRerun=payload.get("schemaVersion") != 2,
+        costSnapshot=payload.get("costSnapshot"),
+        warnings=payload.get("warnings", []),
+        benchmarkReason=payload.get("benchmarkReason"),
         batchId=row.batch_id,
         stale=row.stale,
         definition=payload["definition"],

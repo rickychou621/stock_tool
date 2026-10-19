@@ -3,7 +3,10 @@ from app.settings.service import SettingsService
 
 
 def _make_settings(**overrides: object) -> Settings:
-    return Settings(db_password="test", **overrides)  # type: ignore[arg-type]
+    # Never inherit real notification credentials from the developer environment.
+    values = dict(db_password="test", telegram_bot_token="", telegram_chat_id="")
+    values.update(overrides)
+    return Settings(**values)  # type: ignore[arg-type]
 
 
 def test_get_settings_summary_reports_telegram_not_configured() -> None:

@@ -21,6 +21,7 @@ class BacktestTask(Base):
     succeeded: Mapped[int] = mapped_column(default=0)
     failed: Mapped[int] = mapped_column(default=0)
     errors: Mapped[list] = mapped_column(JSON, default=list)
+    context_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class BacktestResult(Base):

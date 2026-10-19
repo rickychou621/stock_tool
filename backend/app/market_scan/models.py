@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -108,3 +109,61 @@ class ScanCoverage(Base):
     ticker: Mapped[str] = mapped_column(String(10), primary_key=True)
     # Source-confirmed intervals + returned dates. Empty suspension/listing gaps are explicit.
     ranges: Mapped[list] = mapped_column(JSON, default=list)
+
+
+class BatchCoverage(Base):
+    __tablename__ = "market_scan_batch_coverage"
+    trade_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    absent_tickers: Mapped[list] = mapped_column(JSON, default=list)
+
+
+class DividendCoverage(Base):
+    __tablename__ = "market_scan_dividend_coverage"
+    ticker: Mapped[str] = mapped_column(String(10), primary_key=True)
+    start_date: Mapped[date] = mapped_column(Date)
+    end_date: Mapped[date] = mapped_column(Date)
+
+
+class SignalHistory(Base):
+    __tablename__ = "market_scan_signal_history"
+    __table_args__ = (
+        UniqueConstraint("signal_date", "ticker", "rule_id"),
+        Index("ix_signal_rule_date", "rule_id", "signal_date"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    signal_date: Mapped[date] = mapped_column(Date, index=True)
+    ticker: Mapped[str] = mapped_column(String(10), index=True)
+    stock_name: Mapped[str] = mapped_column(String(50))
+    rule_id: Mapped[int] = mapped_column(Integer, index=True)
+    rule_name: Mapped[str] = mapped_column(String(100))
+    kind: Mapped[str] = mapped_column(String(20))
+    price_date: Mapped[date] = mapped_column(Date)
+    older_quote: Mapped[bool] = mapped_column(Boolean)
+    close: Mapped[float] = mapped_column(Numeric(14, 4))
+    volume: Mapped[int] = mapped_column(BigInteger)
+    turnover: Mapped[float | None] = mapped_column(Numeric(22, 2), nullable=True)
+    indicators: Mapped[dict] = mapped_column(JSON)
+    source: Mapped[str] = mapped_column(String(16))
+    first_batch_id: Mapped[str] = mapped_column(String(36))
+    last_batch_id: Mapped[str] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime)
+    cost_snapshot: Mapped[dict] = mapped_column(JSON)
+
+
+class SignalReturn(Base):
+    __tablename__ = "market_scan_signal_returns"
+    __table_args__ = (Index("ix_signal_horizon_status", "horizon", "status"),)
+    signal_id: Mapped[int] = mapped_column(
+        ForeignKey("market_scan_signal_history.id"), primary_key=True
+    )
+    horizon: Mapped[int] = mapped_column(Integer, primary_key=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    values_json: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class SignalTrackingMeta(Base):
+    __tablename__ = "market_scan_signal_meta"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    deployed_on: Mapped[date] = mapped_column(Date)

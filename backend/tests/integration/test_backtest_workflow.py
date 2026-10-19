@@ -88,7 +88,9 @@ def success(sessions, ticker, *args):
 
 
 def make_manager(factory, worker=success):
-    return BacktestManager(factory, calendar=lambda *args: DATES, worker=worker)
+    return BacktestManager(
+        factory, calendar=lambda *args: DATES, worker=worker, benchmark_loader=lambda *args: {}
+    )
 
 
 def test_partial_failure_retains_stale_excludes_old_and_snapshot_is_atomic(factory):

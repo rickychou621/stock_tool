@@ -3,9 +3,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '../../api/client'
 import { PageHeader } from '../../components/PageHeader'
 import type { WatchRule } from '../rules/types'
-import type { Detail, Metrics, Report, StockPerformance } from './types'
+import type { CostSnapshot, Detail, Metrics, Report, StockPerformance } from './types'
 
-const percent = (n: number | null) => (n === null ? '無資料' : `${(n * 100).toFixed(2)}%`)
+const percent = (n: number | null | undefined) => (n == null ? '無資料' : `${(n * 100).toFixed(2)}%`)
 const price = (n: number | null) => (n === null ? '—' : n.toFixed(2))
 const states: Record<string, string> = {
   running: '執行中',
@@ -20,19 +20,24 @@ const states: Record<string, string> = {
   not_met: '未符合',
 }
 const statusLabels = { closed: '已完成', open: '持有中', unfilled: '未成交' }
-const metricHeaders = ['交易次數', '勝率', '平均報酬', '複利報酬', '最大回撤', '獲利因子']
-function MetricCells({ metrics: m }: { metrics: Metrics }) {
+const metricHeaders = ['交易次數', '淨勝率', '平均淨報酬', '淨複利報酬', '淨最大回撤', '淨獲利因子']
+function CostInfo({ costs }: { costs: CostSnapshot | null }) {
+  if (!costs) return <p className="backtest-warning">舊結果未記錄成本，需重新回測。</p>
+  return <p className="muted">本次成本：買賣手續費各 {(costs.feeRate * 100).toFixed(4)}% × {costs.feeDiscount}；
+    賣出證交稅：普通股 {percent(costs.taxRateStock)}、ETF {percent(costs.taxRateEtf)}。</p>
+}
+function MetricCells({ metrics: m, gross }: { metrics: Metrics; gross: Metrics }) {
   return (
     <>
       <td>
         {m.tradeCount}
         {m.insufficientSample && <small className="backtest-warning">樣本不足</small>}
       </td>
-      <td>{percent(m.winRate)}</td>
-      <td>{percent(m.averageReturn)}</td>
-      <td>{percent(m.compoundReturn)}</td>
-      <td>{percent(m.maxDrawdown)}</td>
-      <td>{!m.tradeCount ? '無資料' : m.noLosses ? '無虧損' : m.profitFactor?.toFixed(2)}</td>
+      <td>{percent(m.winRate)}<small>毛 {percent(gross.winRate)}</small></td>
+      <td>{percent(m.averageReturn)}<small>毛 {percent(gross.averageReturn)}</small></td>
+      <td>{percent(m.compoundReturn)}<small>毛 {percent(gross.compoundReturn)}</small></td>
+      <td>{percent(m.maxDrawdown)}<small>毛 {percent(gross.maxDrawdown)}</small></td>
+      <td>{!m.tradeCount ? '無資料' : m.noLosses ? '無虧損' : m.profitFactor?.toFixed(2)}<small>毛 {gross.noLosses ? '無虧損' : gross.profitFactor?.toFixed(2) ?? '無資料'}</small></td>
     </>
   )
 }
@@ -63,6 +68,10 @@ function TradeDetails({ stock, batch }: { stock: StockPerformance; batch: string
           <p className="muted">
             成交價格統一還原至 {data.priceBasisDate}；共 {data.tradeTotal} 筆交易紀錄。
           </p>
+          <CostInfo costs={data.costSnapshot} />
+          {data.needsRerun && <p className="backtest-warning">需重新回測：以下舊報酬只代表毛報酬。</p>}
+          {data.warnings.map((w) => <p key={w} className="backtest-warning">{w}</p>)}
+          {data.benchmarkReason && <p className="muted">{data.benchmarkReason}</p>}
           <div className="table-scroll">
             <table className="data-table">
               <thead>
@@ -74,8 +83,9 @@ function TradeDetails({ stock, batch }: { stock: StockPerformance; batch: string
                     '賣出訊號',
                     '賣出日期／價格',
                     '持有交易日',
-                    '已實現報酬',
-                    '未實現報酬',
+                    '已實現淨／毛報酬',
+                    '未實現淨／毛報酬',
+                    '0050／超額報酬',
                   ].map((h) => (
                     <th key={h}>{h}</th>
                   ))}
@@ -101,11 +111,15 @@ function TradeDetails({ stock, batch }: { stock: StockPerformance; batch: string
                       {price(t.exitPrice)}
                     </td>
                     <td>{t.holdingDays ?? '—'}</td>
-                    <td>{percent(t.returnRate)}</td>
+                    <td>{data.needsRerun ? '需重新回測' : percent(t.netReturnRate)}
+                      <small>毛 {percent(data.needsRerun ? t.returnRate : t.grossReturnRate)}</small></td>
                     <td>
-                      {percent(t.unrealizedReturn)}
+                      {data.needsRerun ? '需重新回測' : percent(t.netUnrealizedReturn)}
+                      <small>毛 {percent(data.needsRerun ? t.unrealizedReturn : t.grossUnrealizedReturn)}</small>
                       {t.valuationDate && <small>估值日 {t.valuationDate}</small>}
                     </td>
+                    <td>{percent(t.benchmarkReturn)}<small>超額 {percent(t.excessReturn)}</small>
+                      {t.benchmarkReason && <small>{t.benchmarkReason}</small>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -220,6 +234,7 @@ export function BacktestPage() {
         )}
         {task && (
           <div className="schedule-summary" role="status">
+            <CostInfo costs={task.costSnapshot} />
             <strong>{states[task.status]}</strong> · 已完成 {task.completed}／{task.total} 檔
             <p>
               成功 {task.succeeded} 檔 · 失敗 {task.failed} 檔 · 期間 {task.startDate}～
@@ -252,11 +267,12 @@ export function BacktestPage() {
         {report.isSuccess && !task && <p className="muted">尚無回測結果，勾選戰法後即可開始。</p>}
       </div>
       <div className="card backtest-notes">
-        <p>訊號後下一有效交易日開盤成交；不計交易成本、滑價，也不額外將股利再投入。</p>
+        <p>訊號後下一有效交易日開盤成交；淨報酬包含買賣手續費與賣出證交稅。未模擬最低手續費 20 元、滑價或當沖稅率，也不額外將股利再投入。</p>
         <p>
-          複利報酬與最大回撤僅依已完成交易計算，不含持倉期間浮動損益。跨股票複利僅供比較，不是實際投資組合績效。
+          0050 為不扣成本的還原報酬，超額報酬為淨報酬減 0050。複利報酬與最大回撤僅依已完成交易計算，不含持倉期間浮動損益。跨股票複利僅供比較，不是實際投資組合績效。
         </p>
         <p>少於 10 筆已完成交易標示樣本不足；上市較晚或需較長指標暖機的股票，實際期間可能較短。</p>
+        <p>目前還原價格未涵蓋分割／減資；跨越這類事件的個股或 0050 基準可能失真。</p>
       </div>
       {task && (
         <>
@@ -274,6 +290,7 @@ export function BacktestPage() {
                     {metricHeaders.map((h) => (
                       <th key={h}>{h}</th>
                     ))}
+                    <th>平均超額／0050 基準</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -288,7 +305,8 @@ export function BacktestPage() {
                         <br />
                         {r.actualEnd}
                       </td>
-                      <MetricCells metrics={r.metrics} />
+                      <MetricCells metrics={r.metrics} gross={r.grossMetrics} />
+                      <td>{percent(r.averageExcessReturn)}<small>0050 買進持有 {percent(r.benchmarkBuyHoldReturn)}</small></td>
                     </tr>
                   ))}
                 </tbody>
@@ -361,6 +379,7 @@ export function BacktestPage() {
                     {metricHeaders.map((h) => (
                       <th key={h}>{h}</th>
                     ))}
+                    <th>平均超額／0050 基準</th>
                     <th>持有／未成交</th>
                     <th>明細</th>
                   </tr>
@@ -371,6 +390,7 @@ export function BacktestPage() {
                       <td>
                         {s.ticker} {s.stockName}
                         <small>{s.ruleName}</small>
+                        {s.needsRerun && <strong className="backtest-warning">需重新回測</strong>}
                         {s.stale && (
                           <strong className="backtest-warning">過期：上次成功結果</strong>
                         )}
@@ -381,7 +401,9 @@ export function BacktestPage() {
                         {s.actualEnd}
                         <small>略過 {s.skippedSessions} 個無有效行情日</small>
                       </td>
-                      <MetricCells metrics={s.metrics} />
+                      <MetricCells metrics={s.metrics} gross={s.grossMetrics} />
+                      <td>{percent(s.averageExcessReturn)}<small>0050 買進持有 {percent(s.benchmarkBuyHoldReturn)}</small>
+                        {s.benchmarkReason && <small>{s.benchmarkReason}</small>}</td>
                       <td>
                         {s.openCount}／{s.unfilledCount}
                       </td>

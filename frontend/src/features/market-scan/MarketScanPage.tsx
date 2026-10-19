@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '../../api/client'
 import { PageHeader } from '../../components/PageHeader'
+import { SignalPerformance } from './SignalPerformance'
 import type { WatchRule } from '../rules/types'
 import type { Candidate, Page, ScanError, ScanSettings, Summary, Task, Tasks } from './types'
 
@@ -209,8 +210,10 @@ export function MarketScanPage() {
     },
   })
   const start = useMutation({
-    mutationFn: (kind: 'run' | 'initialize') =>
-      apiClient.post(`/market-scan/${kind}`, { ruleIds: selected }),
+    mutationFn: (kind: 'run' | 'initialize' | 'dividends') =>
+      apiClient.post(`/market-scan/${kind === 'dividends' ? 'initialize' : kind}`, {
+        ruleIds: selected, ...(kind === 'run' ? {} : { mode: kind === 'dividends' ? 'dividends' : 'prices' }),
+      }),
     onSuccess: async () => {
       await client.invalidateQueries({ queryKey: ['market-tasks'] })
     },
@@ -224,6 +227,8 @@ export function MarketScanPage() {
       'market-candidates',
       'market-indicators',
       'market-errors',
+      'market-signal-performance',
+      'market-signals',
     ])
       void client.invalidateQueries({ queryKey: [key] })
   }
@@ -298,7 +303,8 @@ export function MarketScanPage() {
           <div>
             <h2>歷史行情初始化</h2>
             <p className="muted">
-              依本次選用戰法補齊缺少的歷史行情；完成後可自行掃描。再次執行只補缺口。
+              先下載歷史行情，再自行補齊股利。股利每檔一次查完整所需期間，仍受來源額度限制。
+              未確認股利完整的標的會顯示「還原資料未完整」，不列為正常戰法命中。
             </p>
           </div>
           <button
@@ -306,9 +312,11 @@ export function MarketScanPage() {
             disabled={busy || !selected.length || !tasks.data || !settings.data}
             onClick={() => start.mutate('initialize')}
           >
-            初始化歷史行情
+            下載歷史行情
           </button>
         </div>
+        <button className="button-add" disabled={busy || !selected.length || !tasks.data || !settings.data}
+          onClick={() => start.mutate('dividends')}>補齊歷史股利</button>
         <Progress task={tasks.data?.initialize} />
         <Errors
           kind="initialize"
@@ -629,7 +637,8 @@ export function MarketScanPage() {
             下一頁
           </button>
         </div>
-      </section>
+        <SignalPerformance version={finishVersion} />
+    </section>
     </div>
   )
 }

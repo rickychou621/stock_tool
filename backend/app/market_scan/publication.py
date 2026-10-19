@@ -35,6 +35,9 @@ def publish(db, batch_id, outcomes, metadata):
                     for k, v in values["indicators"].items()
                 ]
             )
+    from app.market_scan.signal_tracking import record_signals
+
+    record_signals(db, batch_id, outcomes, metadata)
     db.flush()
     statuses = list(db.scalars(select(ScanCandidate.status)))
     metadata = dict(

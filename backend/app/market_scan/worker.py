@@ -8,6 +8,7 @@ from app.conditions.types import ConditionBar
 from app.market_data.models import Stock
 from app.market_data.validation import valid_ohlcv
 from app.market_scan.data import prepare, required_days
+from app.market_scan.models import DividendCoverage
 from app.rules.evaluation import RuleEvaluationService
 
 
@@ -123,6 +124,23 @@ def process_stock(factory, instrument, rules, kind, dates, limiter):
     ticker, instrument_kind, listed_on = instrument
     with factory() as db:
         bars = prepare(db, ticker, listed_on, kind, rules, dates, limiter)
+        if kind == "initialize":
+            if any(not valid_ohlcv(b) or not valid_ohlcv(b, True) for b in bars):
+                raise ValueError("歷史行情仍有無效資料，請查看來源警告並重新補缺")
+            if not any(valid_ohlcv(b) and valid_ohlcv(b, True) for b in bars):
+                raise ValueError("沒有有效日K，請先下載歷史行情")
+            # Initialization reports data preparation, never strategy matches.
+            return Outcome(ticker, rules={r.id: ("normal", None) for r in rules})
+        coverage = db.get(DividendCoverage, ticker)
+        start = max(listed_on, dates[-1] - timedelta(days=required_days(rules)))
+        expected = next((d for d in dates if d >= start), start)
+        if not coverage or coverage.start_date > expected or coverage.end_date < dates[-1]:
+            reason = "還原資料未完整，請先執行補齊歷史股利；暫不評估戰法"
+            return Outcome(
+                ticker,
+                rules={r.id: ("insufficient_history", reason) for r in rules},
+                errors=[(r.id, "insufficient_history", reason) for r in rules],
+            )
         stock = db.scalar(select(Stock).where(Stock.ticker == ticker))
         result = evaluate_stock(ticker, stock.name, instrument_kind, rules, bars, dates)
         if kind == "initialize":

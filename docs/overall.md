@@ -58,9 +58,9 @@
 
 每次任務更新 TWSE ISIN 上市名單，含上市創新板普通股，排除上櫃、特別股、ETN、權證、TDR、REIT。名單來源異常或完整性檢查失敗沿用舊有效名單，無可用舊名單才失敗。這份名單不改使用者觀察清單。
 
-初始化依所選條件的回看與暖機需求補缺漏行情／股利，完成後不自動掃描。日常掃描只更新基準日及前 5 個交易日的必要區間，不自動補更早歷史。有效日 K 最多可落後 5 個實際交易日，結果會標示較舊行情；條件歷史不足另列資料不足。
+初始化拆成下載歷史行情與補齊歷史股利，依所選條件的回看與暖機需求補缺，兩者完成後都不自動掃描。日常掃描只更新基準日及前 5 個交易日的必要區間，不自動補更早歷史。有效日 K 最多可落後 5 個實際交易日，結果會標示較舊行情；條件歷史不足另列資料不足。
 
-初始化、自動、手動掃描共用任務鎖，不排隊；與回測使用不同鎖，可並行。預設 5 worker，各自 DB Session；第三階段 FinMind 請求共用每分鐘 4 次的節流，並非每 worker 各 4 次。全市場第一次下載可能耗時數小時，精確限制與估算見交付文件。
+初始化、自動、手動掃描共用任務鎖，不排隊；與回測使用不同鎖，可並行。行情在 worker 啟動前按日期使用 MI_INDEX 批次寫入。預設 5 worker 各自 DB Session，只讀資料庫評估；TWT49U 先偵測除權息，僅缺少事件的標的使用 FinMind，每分鐘 4 次。所有 TWSE／ISIN 呼叫共用至少 3 秒間隔。初始化純行情節流約 40 分鐘，另加股利與運算時間。
 
 候選在任務結束後一次 transaction 發佈，執行期間仍可看上次結果。成功評估不再符合者移除；失敗或歷史不足只保留既有列並標異常，不製造新命中。預設只查正常命中，支援名稱／代號、戰法、日期、價格、量、實際成交金額、數值指標、狀態的伺服端篩選、排序、分頁。行情落後但成功評估與評估失敗沿用舊結果是不同狀態。
 
@@ -89,7 +89,7 @@ Telegram 與 MySQL 沒有共同交易：若 Telegram 已收到但回應逾時，
 | 後端 | Python 3.12、FastAPI、SQLAlchemy，DDD-lite／feature-folder |
 | 前端 | React、TypeScript、Vite，feature-folder |
 | 儲存 | MySQL；行情、股利、觀察清單、評估、規則、告警、排程、回測與全市場結果持久化。沒有用記憶體快取代替持久化防重 |
-| 外部來源 | FinMind 原始日 K 與股利；TWSE 上市名單及實際交易日 |
+| 外部來源 | TWSE 全市場日 K、除權息偵測、上市名單及交易日；FinMind 觀察清單／回測日 K 與股利細節 |
 | 還原股價 | `market_data/price_adjustment.py` 共用自行還原算法，寫入 `stock_price_daily.adj_*`；不依賴付費 `TaiwanStockPriceAdj` |
 | 排程與併行 | APScheduler 在 backend process 內執行；MySQL named lock 控制背景任務互斥，單 backend replica、單 Uvicorn worker |
 | 通知 | 共用 `TelegramNotifier`，Bot token／Chat ID 由後端環境設定 |
@@ -122,7 +122,7 @@ stock_tool/
 - 共用還原算法目前未涵蓋 ETF 分割／反分割、減資等企業行動，跨這些事件的長週期指標有口徑限制。
 - 已確認來源無行情的歷史區間不反覆下載；來源事後補資料目前無強制刷新入口，維護方式見階段三交付文件。
 - 階段三共享 FinMind 額度不包含階段一、二或同 IP 其他工具；來源配額失敗記錄錯誤，不自動重試。
-- 階段三實作驗收使用隔離測試與來源抽查，尚未以完整市場實際初始化／掃描及真實 19:00 排程驗證全部外部資料品質與耗時。
+- 全市場批次手動掃描驗證結果見階段四 A 交付；完整三年初始化及真實 19:00 排程尚未驗證。自動排程依使用者要求保持關閉。
 
 ## 相關文件
 
@@ -130,3 +130,30 @@ stock_tool/
 - [階段一交付](plan/02stock_tool_stage1_delivery.md)
 - [階段二交付](plan/04stock_tool_stage2_delivery.md)
 - [階段三需求](plan/05stock_tool_stage3_codex_prompt_final.md)、[階段三交付](plan/06stock_tool_stage3_delivery.md)
+
+## 階段四 A：日期批次行情
+
+已實作批次行情；後續完成 C 回測成本及 0050 基準，B 訊號績效追蹤已完成程式與本機部署，驗證見階段四交付文件末節。日常補近 6 個交易日，初始化依戰法回看期按日期補缺；TWT49U 日常查一次範圍，股利初始化按月偵測後彙整；每檔以最早至最晚缺漏事件期間只查一次 FinMind。純行情初始化完全略過股利 API。既有有效行情重用，確認無行情另外保存，無效行情不列入完成 coverage。
+
+`market_scan/batch_data.py` 負責下載與 coverage；`MarketDataService.import_market_day()` 共用既有還原算法，單日行情、還原價與 coverage 同一交易提交。來源失敗無重試、無逐檔行情備援；股利不一致列逐股警告，仍評估。`FINMIND_API_TOKEN` 已接入 Bearer header，`TWSE_MIN_REQUEST_INTERVAL_SECONDS` 預設 3。009 migration 不改既有排程設定。
+
+2026-10-15 後續調整：`POST /market-scan/initialize` 新增 `mode=prices|dividends`，預設 prices。兩模式共用 initialize 任務槽與原有互斥；不互相自動接續、不發 Telegram、不更動排程。股利查詢進度會顯示已處理／需查詢檔數。010 新增股利核對期間，只有事件來源完整且所有預期事件都已存在的股票才記錄完整；相鄰或重疊期間可合併，缺口不合併。
+
+全市場掃描若股利核對未涵蓋所選戰法的回看期，該標的列為 `insufficient_history`，原因顯示「還原資料未完整」，不當成正常命中。初始化的成功數代表行情資料可用，不代表戰法命中；股利或來源錯誤會列警告及 partial_completed。既有事件會重用，舊資料沒有核對紀錄時仍需手動補齊歷史股利。此次沒有自動重啟已中斷初始化。
+
+## 階段四 C：回測成本與基準
+
+共用 `app/trading_costs.py` 計算比例成本。`backtest/costs_benchmark.py` 在原模擬產出後附加毛／淨報酬與 0050 比較，沒有改變策略判斷、成交時間或還原算法。`returnRate`、`unrealizedReturn` 與 `metrics` 在 schemaVersion=2 結果代表淨值，另提供 grossReturnRate、grossUnrealizedReturn、grossMetrics。
+
+回測接受時保存 costSnapshot；準備交易日期後整批下載／讀取一次 0050，使用同一結束日還原基準。個股種類取 market_scan_instruments，未知採普通股並記錄警告。逐筆交易基準為同日開盤到開盤；個股與戰法整體的買進持有基準為實際期間首日開盤至末日收盤。基準缺資料不影響策略回測，回傳 null 與原因。平均超額只計入有可比較基準的已平倉交易。
+
+API 路徑維持 `/backtests`、`/backtests/latest`、`/backtests/results/{id}`。新增 costSnapshot、grossMetrics、averageExcessReturn、benchmarkBuyHoldReturn、needsRerun 等欄位。舊結果不冒充淨值，顯示需重新回測並排除於本次淨績效彙總。前端並列毛／淨績效、成本設定與 0050；不增加前端自動化測試。
+
+011 migration 新增 task.context_json 保存成本及 0050 價格快照，結果仍保存於既有 JSON，沒有新增績效追蹤表。此次沒有啟動回測或任何初始化，排程保持原設定。
+## 階段四 B：訊號歷史與後續績效
+
+掃描的正常命中在原子發佈交易內寫入 `market_scan_signal_history`，同日同股票同戰法保留首次快照；非正常結果不記錄為新訊號。發佈後使用 `signal_tracking.backfill()` 分批讀取 DB 日曆、行情與 0050，回填到期且未完成的觀察期，不呼叫外部 API。回填失敗只新增警告，不回滾已發佈候選。
+
+`GET /market-scan/signal-performance` 提供戰法 × 觀察期統計，`GET /market-scan/signals` 提供明細。兩者支援 ruleId、from、to、kind、minTurnover、excludeOlderQuote；明細另有 ticker、signalDate、page、pageSize，預設 50、上限 200。
+
+前端位於全市場掃描頁，顯示部署起日、淨績效、0050 超額與最大不利幅度。樣本少於 30 標示不足，未到期或資料缺漏不填 0。觀察期預設 1／5／10／20 交易日；觀察期 N 使用進場日之後第 N 個市場交易日收盤，觀察期 1 為進場隔一個交易日收盤。成本快照與部署日期持久化，migration 與操作說明見 README。

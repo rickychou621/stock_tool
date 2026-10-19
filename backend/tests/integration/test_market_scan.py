@@ -130,6 +130,7 @@ def manager(factory, worker=success, **kwargs):
         factory,
         calendar=lambda *args: DATES,
         universe=universe,
+        batch_prepare=lambda *args, **kwargs: ([], []),
         worker=worker,
         notifier=Mock(),
         **kwargs,
@@ -578,16 +579,15 @@ def test_existing_complete_prices_only_supplement_dividend_coverage(factory, mon
         assert sync.call_count == 1
 
 
-def test_scan_never_backfills_history_and_caches_source_confirmed_absence(factory, monkeypatch):
+def test_worker_only_reads_database_without_external_sync(factory, monkeypatch):
     from app.market_scan.data import prepare
 
     with factory() as db:
         sync = Mock(return_value=0)
         monkeypatch.setattr(MarketDataService, "sync_daily_prices", sync)
         prepare(db, "1", date(2000, 1, 1), "scan", [rule(2, "macd_positive")], DATES, Mock())
-        assert sync.call_args.kwargs["start_date"] == DATES[-6]
         prepare(db, "1", date(2000, 1, 1), "scan", [rule(2, "macd_positive")], DATES, Mock())
-        assert sync.call_count == 1
+        sync.assert_not_called()
 
 
 def test_current_month_without_trades_still_allows_holiday_manual_baseline(

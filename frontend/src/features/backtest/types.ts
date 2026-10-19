@@ -1,3 +1,9 @@
+export interface CostSnapshot {
+  feeRate: number
+  feeDiscount: number
+  taxRateStock: number
+  taxRateEtf: number
+}
 export interface Metrics {
   tradeCount: number
   winRate: number | null
@@ -14,6 +20,9 @@ export interface Performance {
   actualStart: string
   actualEnd: string
   metrics: Metrics
+  grossMetrics: Metrics
+  averageExcessReturn: number | null
+  benchmarkBuyHoldReturn: number | null
 }
 export interface StockPerformance extends Performance {
   batchId: string
@@ -21,6 +30,10 @@ export interface StockPerformance extends Performance {
   ticker: string
   stockName: string
   stale: boolean
+  needsRerun: boolean
+  costSnapshot: CostSnapshot | null
+  warnings: string[]
+  benchmarkReason: string | null
   calculatedAt: string
   openCount: number
   unfilledCount: number
@@ -28,6 +41,7 @@ export interface StockPerformance extends Performance {
 }
 export interface Report {
   task: null | {
+    costSnapshot: CostSnapshot | null
     batchId: string
     status: string
     startDate: string
@@ -50,6 +64,13 @@ export interface Trade {
   exitPrice: number | null
   status: 'closed' | 'open' | 'unfilled'
   returnRate: number | null
+  grossReturnRate?: number | null
+  netReturnRate?: number | null
+  grossUnrealizedReturn?: number | null
+  netUnrealizedReturn?: number | null
+  benchmarkReturn?: number | null
+  excessReturn?: number | null
+  benchmarkReason?: string | null
   unrealizedReturn: number | null
   holdingDays: number | null
   valuationDate: string | null
@@ -58,6 +79,10 @@ export interface Trade {
 export interface Detail {
   batchId: string
   stale: boolean
+  needsRerun: boolean
+  costSnapshot: CostSnapshot | null
+  warnings: string[]
+  benchmarkReason: string | null
   priceBasisDate: string
   tradeTotal: number
   signalTotal: number

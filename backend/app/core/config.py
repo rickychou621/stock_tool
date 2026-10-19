@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,7 +27,27 @@ class Settings(BaseSettings):
     screening_interval_minutes: int = 5
     candidate_pool_limit: int = 10
     market_scan_workers: int = Field(default=5, gt=0, le=32)
+    twse_min_request_interval_seconds: float = Field(default=3, gt=0, allow_inf_nan=False)
     finmind_scan_requests_per_minute: int = Field(default=4, gt=0, le=600)
+
+    trade_fee_rate: float = Field(default=0.001425, ge=0, lt=1, allow_inf_nan=False)
+    trade_fee_discount: float = Field(default=1.0, gt=0, le=1, allow_inf_nan=False)
+    trade_tax_rate_stock: float = Field(default=0.003, ge=0, lt=1, allow_inf_nan=False)
+    trade_tax_rate_etf: float = Field(default=0.001, ge=0, lt=1, allow_inf_nan=False)
+
+    signal_tracking_horizons: str = "1,5,10,20"
+
+    @field_validator("signal_tracking_horizons")
+    @classmethod
+    def valid_horizons(cls, value):
+        parts = value.split(",")
+        if not parts or any(not p.strip().isdigit() or not 1 <= int(p) <= 60 for p in parts):
+            raise ValueError("觀察期須為逗號分隔的 1～60 正整數")
+        return ",".join(str(n) for n in sorted({int(p) for p in parts}))
+
+    @property
+    def tracking_horizons(self):
+        return [int(n) for n in self.signal_tracking_horizons.split(",")]
 
     @property
     def database_url(self) -> str:

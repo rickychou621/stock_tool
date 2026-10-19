@@ -204,3 +204,32 @@ watch_rules 1───N alerts_log
 新增 `market_scan_instruments/settings/tasks/errors/coverage/candidates/indicators/publication` 八表。市場名單 active 不改使用者觀察清單；scan/initialize 最近任務各一筆；候選 unique(ticker, rule_id)，並索引 ticker、kind、rule_id、status、batch_id、price_date、close、volume、turnover。數值指標另外索引供動態條件查詢。
 
 候選、指標、批次 metadata 與 scan 完成狀態同一 transaction 發佈，工作中不改候選；錯誤採逐股／戰法保存及分頁查詢。初始化覆蓋記錄不取代共用 OHLC、股利表。完整欄位與語意見 [階段三交付紀錄](plan/06stock_tool_stage3_delivery.md)。
+
+## 階段四 A Migration 009
+
+`mysql/init/009_stage4.sql` 可重複部署，新增 `market_scan_batch_coverage`：`trade_date DATE` 主鍵、`absent_tickers JSON` 保存來源確認無成交或未回傳的代號。有效列直接從日 K 判斷；無效列不寫入 absence，後續可重新補取。舊 `market_scan_coverage` 保留，但批次路徑不使用其逐檔區間記錄。
+
+新增 `stock_price_daily.trade_date` 索引，支援按日查缺口。單日行情、還原價、股票資料版本與 coverage 同一 transaction 更新。009 不改排程設定、不新增訊號歷史／績效表；階段四 B/C 待後續實作。
+
+## 股利完整性 Migration 010
+
+`mysql/init/010_dividend_coverage.sql` 新增 `market_scan_dividend_coverage`：`ticker VARCHAR(10)` 主鍵、`start_date DATE`、`end_date DATE`。保存 TWSE 事件查詢成功且已具備所有預期股利事件的期間；FinMind 缺事件或來源失敗不新增完整性證明。不依既有股利列自動推定完整。可重複執行，不修改日 K、股利或排程設定。
+
+覆蓋期間只合併重疊或相鄰範圍。日常 6 日事件核對可延長已初始化區間；跨越缺口時不宣告中間完整。全市場評估要求覆蓋戰法回看期，未覆蓋者列資料不足；觀察清單與回測未套用此限制。
+
+## 回測成本 Migration 011
+
+`mysql/init/011_backtest_costs.sql` 可重複執行，新增 `backtest_latest_task.context_json JSON NULL`。接受任務時保存 costSnapshot，準備基準後加入日期到 0050 還原開／收盤的映射。API 僅公開成本，不整份回傳基準快照。
+
+既有 `backtest_results.payload/summary` 新結果包含 schemaVersion=2、costSnapshot、grossMetrics、淨 metrics 與 0050 比較欄位，交易保留 grossReturnRate/netReturnRate/grossUnrealizedReturn/netUnrealizedReturn。舊 JSON 不回填推算淨值，透過 needsRerun 標示。成本與基準準備後的每檔全部戰法結果仍同一 transaction 保存。
+## 訊號績效追蹤 Migration 012
+
+`012_signal_tracking.sql` 可重複執行，新增以下資料表，不改動排程或既有候選。
+
+| 表 | 用途與鍵 |
+|---|---|
+| `market_scan_signal_history` | 首次命中快照與成本參數；唯一鍵 `(signal_date, ticker, rule_id)`，另有日期、戰法日期與股票索引 |
+| `market_scan_signal_returns` | 每筆訊號各觀察期的進出場、毛／淨／0050／超額報酬與不利幅度；主鍵 `(signal_id, horizon)`，狀態為 pending／completed／unavailable，保存原因與 JSON 數值 |
+| `market_scan_signal_meta` | 單例首次部署日；重複部署不改日期 |
+
+歷史與候選在同一交易發佈；回填在發佈提交後獨立執行。歷史永久保存，不隨最新掃描任務清理。同日重跑只更新最後批次與時間，不改首次快照。

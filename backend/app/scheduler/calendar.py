@@ -2,14 +2,14 @@
 
 from datetime import date
 
-import httpx
+from app.data_source import twse_client
 
 
 class TwseCalendar:
     def is_trading_day(self, day: date) -> bool:
         if day.weekday() >= 5:
             return False
-        response = httpx.get(
+        response = twse_client.get(
             "https://www.twse.com.tw/exchangeReport/FMTQIK",
             params={"response": "json", "date": day.replace(day=1).strftime("%Y%m%d")},
             timeout=20,

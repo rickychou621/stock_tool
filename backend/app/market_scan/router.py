@@ -25,8 +25,10 @@ from app.market_scan.schemas import (
     TasksResponse,
 )
 from app.market_scan.service import ScanBusy, chosen_rules, manager, settings_row
+from app.market_scan.signal_api import router as signal_router
 
 router = APIRouter(prefix="/market-scan", tags=["market-scan"])
+router.include_router(signal_router)
 
 
 class SettingsInput(CamelModel):
@@ -71,9 +73,19 @@ def save(values: SettingsInput, db: Session = Depends(get_db)):
     return read_settings(db)
 
 
+class InitializeInput(StartInput):
+    mode: Literal["prices", "dividends"] = "prices"
+
+
 def start(values, kind):
     try:
-        return dict(batchId=manager.start(values.rule_ids, kind=kind))
+        return dict(
+            batchId=manager.start(
+                values.rule_ids,
+                kind=kind,
+                **({"mode": values.mode} if kind == "initialize" else {}),
+            )
+        )
     except ScanBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     except ValueError as exc:
@@ -81,7 +93,7 @@ def start(values, kind):
 
 
 @router.post("/initialize", status_code=202, response_model=Accepted)
-def initialize(values: StartInput):
+def initialize(values: InitializeInput):
     return start(values, "initialize")
 
 

@@ -142,3 +142,94 @@ class MarketDataService:
                     raise
         finally:
             self._repository = original_repository
+
+    def import_market_day(self, day, rows):
+        """No commit: prices, adjustments and coverage belong to one day transaction."""
+        from decimal import Decimal
+
+        from sqlalchemy import func
+
+        from app.market_data.models import StockDividendEvent, StockPriceDaily
+        from app.market_data.validation import valid_ohlcv
+
+        if not rows:
+            return []
+        tickers = sorted({r["ticker"] for r in rows})
+        if len(tickers) != len(rows) or any(
+            r["trade_date"] != day or not valid_ohlcv(r) for r in rows
+        ):
+            raise ValueError("批次行情日期、代號或 OHLCV 無效")
+        self._db.execute(
+            select(Stock.id)
+            .where(Stock.ticker.in_(tickers))
+            .order_by(Stock.ticker)
+            .with_for_update()
+        ).all()
+        latest = dict(
+            self._db.execute(
+                select(StockPriceDaily.ticker, func.max(StockPriceDaily.trade_date))
+                .where(StockPriceDaily.ticker.in_(tickers))
+                .group_by(StockPriceDaily.ticker)
+            ).all()
+        )
+        old = {
+            b.ticker: b
+            for b in self._db.scalars(
+                select(StockPriceDaily).where(
+                    StockPriceDaily.ticker.in_(tickers), StockPriceDaily.trade_date == day
+                )
+            )
+        }
+        event_dates = self._db.execute(
+            select(StockDividendEvent.ticker, StockDividendEvent.ex_dividend_date).where(
+                StockDividendEvent.ticker.in_(tickers)
+            )
+        ).all()
+        later_events = {t for t, ex in event_dates if day < ex <= latest.get(t, day)}
+        # Filling a missing historical day after the last known dividend cannot
+        # change any adjustment factor. Its raw OHLC is already the correct basis.
+        # Revisions and inserts preceding a known event still recalculate history.
+        recalculate = {
+            t for t, last in latest.items() if last >= day and (t in old or t in later_events)
+        }
+        recalculate.update(t for t, ex in event_dates if t in latest and latest[t] < ex <= day)
+        warnings, prepared = [], []
+        for row in rows:
+            ticker = row["ticker"]
+            previous = old.get(ticker)
+            if (
+                previous is not None
+                and valid_ohlcv(previous)
+                and any(
+                    abs(Decimal(str(row[k])) - getattr(previous, k)) > Decimal("0.01")
+                    for k in ("open", "high", "low", "close")
+                )
+            ):
+                warnings.append((ticker, f"{day} OHLC 與既有資料差異超過 0.01 元，以證交所為準"))
+            adjusted = apply_adjustment(
+                [
+                    PriceBar(
+                        trade_date=day,
+                        **{k: float(row[k]) for k in ("open", "high", "low", "close")},
+                    )
+                ],
+                [],
+            )[day]
+            prepared.append({**row, **{f"adj_{k}": v for k, v in adjusted.items()}})
+        original = self._repository
+        self._repository = MarketDataRepository(self._db, commit=False)
+        try:
+            self._repository.upsert_market_bars(prepared)
+            # Bulk SQL bypasses identity-map values read above.
+            self._db.expire_all()
+            for ticker in sorted(recalculate):
+                self._recalculate_adjusted_prices(ticker, validate=True)
+            self._db.execute(
+                update(Stock)
+                .where(Stock.ticker.in_(tickers))
+                .values(data_version=Stock.data_version + 1)
+            )
+            self._db.flush()
+        finally:
+            self._repository = original
+        return warnings

@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.backtest.models import BacktestCalendarMonth, BacktestCoverage
 from app.conditions.types import ConditionBar
+from app.data_source import twse_client
 from app.market_data.models import StockDividendEvent, StockPriceDaily
 from app.market_data.price_adjustment import DividendEvent
 from app.market_data.service import MarketDataService
@@ -41,8 +42,9 @@ def load_trading_dates(
                     )
                 )
             ):
-                response = client.get(
+                response = twse_client.get(
                     "https://www.twse.com.tw/exchangeReport/FMTQIK",
+                    client=client,
                     params={"response": "json", "date": month.strftime("%Y%m%d")},
                     timeout=20,
                 )
