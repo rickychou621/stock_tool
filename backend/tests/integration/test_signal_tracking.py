@@ -8,7 +8,7 @@ from unittest.mock import Mock
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import event, func, select
-from test_market_scan import DAY, NOW, factory, manager, success  # noqa: F401
+from test_market_scan import DATES, DAY, NOW, bars, entry_bars, factory, manager, rule, success  # noqa: F401
 
 from app.backtest.models import BacktestCalendarMonth
 from app.core.config import Settings
@@ -384,3 +384,71 @@ def test_missing_calendar_keeps_unknown_due_dates_pending(factory):
             assert result.status == "pending"
             assert result.reason == "等待下一有效交易日進場"
             assert result.values_json == {}
+
+
+@pytest.mark.parametrize(
+    "scenario,matched,continuing,status",
+    [
+        ("entry", 1, 0, "normal"),
+        ("continuing", 0, 1, "normal"),
+        ("previous_insufficient", 0, 0, "insufficient_history"),
+        ("not_met", 0, 0, "normal"),
+        ("missing_session", 1, 0, "normal"),
+    ],
+)
+def test_entry_event_publication_and_history(factory, scenario, matched, continuing, status):
+    from app.market_scan.worker import evaluate_stock
+
+    sample = entry_bars() if scenario in ("entry", "missing_session") else bars()
+    if scenario == "previous_insufficient":
+        sample = bars(days=DATES[-3:])
+    if scenario == "not_met":
+        sample[-1].close = sample[-1].adj_close = sample[-1].low
+    if scenario == "missing_session":
+        # A market session with no stock bar must not replace its previous valid bar.
+        sample = entry_bars(days=[*DATES[:-2], DATES[-1]])
+    outcome = evaluate_stock("1", "股票1", "stock", [rule()], sample, DATES)
+    assert outcome.rules[1][0] == status
+    assert outcome.continuing == continuing
+    assert len(outcome.candidates) == matched
+    if scenario == "previous_insufficient":
+        assert "前一個有效交易日資料不足" in outcome.rules[1][1]
+    job = manager(factory, worker=lambda *args: outcome)
+    job.universe = lambda *args: ([("1", "stock", date(2000, 1, 1))], None)
+    job.start([1], now=NOW)
+    job.close()
+    with factory() as db:
+        assert db.scalar(select(func.count()).select_from(ScanCandidate)) == matched
+        assert db.scalar(select(func.count()).select_from(SignalHistory)) == matched
+        assert db.get(ScanPublication, 1).metadata_json["continuing"] == continuing
+
+    def override():
+        with factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override
+    try:
+        with TestClient(app) as client:
+            assert client.get("/market-scan/summary").json()["continuing"] == continuing
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_continuing_scan_keeps_watchlist_state_evaluation(factory, monkeypatch):
+    from app.market_data.service import MarketDataService
+    from app.market_scan.worker import evaluate_stock
+    from app.watchlist.evaluation import WatchlistEvaluationService
+    from app.watchlist.models import HoldingsWatchlist
+
+    sample = bars()
+    outcome = evaluate_stock("1", "股票1", "stock", [rule()], sample, DATES)
+    assert outcome.continuing == 1 and not outcome.candidates
+    monkeypatch.setattr(MarketDataService, "sync_daily_prices", lambda *args, **kwargs: len(sample))
+    with factory() as db:
+        db.add_all(sample)
+        item = HoldingsWatchlist(ticker="1", is_active=True)
+        db.add(item)
+        db.commit()
+        result = WatchlistEvaluationService(db).evaluate(item, [1])
+        assert result[0].result["status"] == "matched"
+        assert result[0].result["isMet"]

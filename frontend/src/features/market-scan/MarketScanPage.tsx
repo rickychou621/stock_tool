@@ -343,6 +343,7 @@ export function MarketScanPage() {
           <button onClick={refresh}>重新整理</button>
         </div>
         {busy && <p className="backtest-warning">任務執行中，以下仍為上一批已發佈結果。</p>}
+        <p className="muted">全市場掃描只列入進場事件：今天符合且前一個有效交易日不符合。</p>
         {summary.data ? (
           <>
             <p>
@@ -350,6 +351,7 @@ export function MarketScanPage() {
               {labels[summary.data.status]} · {when(summary.data.finishedAt)} · 基準日{' '}
               {summary.data.baseline}
             </p>
+            <p>延續中 {summary.data.continuing ?? 0} 筆（未列入候選）</p>
             <p>使用戰法：{summary.data.rules.map((r) => r.name).join('、')}</p>
             <div className="market-stats">
               <div>

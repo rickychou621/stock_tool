@@ -54,6 +54,7 @@ class SummaryResponse(CamelModel):
     succeeded: int
     failed: int
     insufficient: int
+    continuing: int = 0
     normal_count: int
     abnormal_count: int
     warnings: list[str]

@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import event, select
-from test_market_scan import DATES, DAY, bars, factory, rule, universe  # noqa: F401
+from test_market_scan import DATES, DAY, bars, entry_bars, factory, rule, universe  # noqa: F401
 
 from app.data_source import twse_client
 from app.data_source.finmind_client import FinMindClient
@@ -214,7 +214,7 @@ def test_unpublished_no_retry_or_finmind_fallback_and_older_quote(factory, monke
     finmind = Mock(side_effect=AssertionError("must not fetch per-stock prices"))
     monkeypatch.setattr(FinMindClient, "get_daily_price", finmind)
     with factory() as db:
-        db.add_all(bars(days=DATES[:-1]))
+        db.add_all(entry_bars(days=DATES[:-1]))
         db.commit()
     warnings, _ = run(factory, client, dates=[DAY])
     assert client.daily.call_count == 1

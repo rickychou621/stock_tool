@@ -39,6 +39,7 @@ export interface Summary {
   succeeded: number
   failed: number
   insufficient: number
+  continuing?: number
   normalCount: number
   abnormalCount: number
   warnings: string[]

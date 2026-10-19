@@ -123,3 +123,16 @@ docker compose -f docker-compose.yaml -f docker-compose.dev.yaml exec -T backend
 日曆不完整時仍先計算各列狀態：pending 保留原原因，其餘結果改為 unavailable「交易日曆不完整」，不保存報酬值。測試涵蓋跨週末出場、未到期與等待進場、缺日曆、已到期且有／無 0050 行情，以及補齊後恢復計算；已完成結果仍不重算。未修改 migration、排程或既有 DB 資料。
 
 驗證使用 `/tmp/stock-venv`，以 `python3 -m venv /tmp/stock-venv` 建立，並在 backend 執行 `/tmp/stock-venv/bin/pip install -r requirements-dev.txt` 安裝依賴。修正前觀察期案例 2 failed、日曆案例 3 failed，均重現目標問題。修正後在 backend 執行 `DB_PASSWORD=test TELEGRAM_BOT_TOKEN= TELEGRAM_CHAT_ID= /tmp/stock-venv/bin/python -m pytest -q --disable-warnings`：183 passed，4078 warnings，27.87 秒；`/tmp/stock-venv/bin/ruff check .` 通過。在 frontend 執行 `npx tsc -b && npx eslint .` 通過。
+
+
+## 2026-10-19：全市場掃描改為進場事件
+
+全市場掃描所有戰法使用同一個 RuleEvaluationService，先評估今天；今天符合時，再以有效日 K 序列移除最後一筆評估前一個有效交易日。只有今天符合、前日不符合才產生正常候選與訊號歷史，後續績效追蹤沿用這些進場事件。連日符合仍為 normal 成功評估，只計入 continuing；前日資料不足列為 insufficient_history，附上前日資料不足原因，不當作進場或延續。前日評估失敗列為 stale。
+
+`ScanPublication.metadata_json.continuing` 保存本批股票 × 戰法的延續總筆數，透過 `GET /market-scan/summary` 頂層 `continuing` 回傳；舊 metadata 缺欄位時預設 0，不需 migration。前端顯示「延續中 N 筆（未列入候選）」，候選與績效區同步說明進場事件。候選既有最低成交金額篩選直接沿用，門檻不加入掃描判定；Telegram 完成通知格式不變。
+
+歷史下載預算已有日 K／月 K 暖機餘裕，本次未改 required_days 或 coverage。仍可能因新上市或歷史缺漏而無法評估前日，此時明確列資料不足。觀察清單維持狀態判定，回測、還原算法、行情來源與排程皆未修改。沒有清除既有訊號歷史，也沒有新增資料清理或 migration；舊訊號由使用者另行處理。
+
+新增測試涵蓋進場事件的候選與訊號歷史各一筆、連日符合不寫入且 continuing 加一、前日資料不足、今日不符合、個股缺交易行情時使用前一有效日，以及觀察清單連日符合仍通過。既有掃描測試行情改為明確的進場樣本，較舊行情測試保留原驗證目的。
+
+驗證結果：在 backend 執行 `DB_PASSWORD=test TELEGRAM_BOT_TOKEN= TELEGRAM_CHAT_ID= /tmp/stock-venv/bin/python -m pytest -q --disable-warnings`，189 passed、4196 warnings，28.05 秒；`/tmp/stock-venv/bin/ruff check .` 通過。在 frontend 執行 `npm ci --cache .npm-cache` 後，`npx --cache .npm-cache tsc -b && npx --cache .npm-cache eslint .` 通過，暫存快取已移除。首次 npm ci 因使用者目錄快取唯讀失敗，改用工作目錄快取後成功；安裝回報既有依賴 9 個漏洞，未擴大範圍升級依賴。未執行瀏覽器或真實市場掃描，未操作容器、既有 DB、commit、push 或 PR。

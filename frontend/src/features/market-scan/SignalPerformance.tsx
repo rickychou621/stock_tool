@@ -58,8 +58,9 @@ export function SignalPerformance({ version }: { version: string }) {
       <h2>戰法績效追蹤</h2>
       <button onClick={() => { void summary.refetch(); if (selected !== null) void details.refetch() }}>重新整理績效</button>
     </div>
+    <p className="muted">全市場掃描只列入進場事件：今天符合且前一個有效交易日不符合。</p>
     <p className="muted">記錄自 {summary.data?.deployedOn ?? '階段四 B 部署日'} 起實際掃描的正常命中訊號，不回填部署前的訊號。
-      樣本少於 30 筆時不足以作為判斷依據；每天的同一股票訊號會重複涵蓋持有期間，並非獨立交易。</p>
+      樣本少於 30 筆時不足以作為判斷依據；不同進場事件的持有期間仍可能重疊，並非獨立交易。</p>
     <p className="muted">訊號後下一有效交易日開盤進場，觀察期 1 為進場隔一個交易日收盤；淨報酬包含成本，0050 為毛報酬。
       每次掃描發佈後回填，尚未到期不顯示報酬。還原價未處理分割／減資。</p>
     <div className="filter-bar">

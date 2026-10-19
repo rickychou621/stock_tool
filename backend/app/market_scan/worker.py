@@ -19,6 +19,7 @@ class Outcome:
     # status per selected rule: normal (including non-match), stale, insufficient_history.
     rules: dict = field(default_factory=dict)
     errors: list = field(default_factory=list)
+    continuing: int = 0
 
     @property
     def succeeded(self):
@@ -85,6 +86,22 @@ def evaluate_stock(ticker, name, instrument_kind, rules, bars, dates):
                 continue
             outcome.rules[rule.id] = ("normal", None)
             if not result.is_met:
+                continue
+            previous = RuleEvaluationService.evaluate_bars(rule, ticker, engine_bars[:-1])
+            if previous.status == "error":
+                raise ValueError(
+                    "前一個有效交易日戰法評估失敗："
+                    + "；".join(c.reason for c in previous.condition_results)
+                )
+            if any(not c.data_sufficient for c in previous.condition_results):
+                reason = "前一個有效交易日資料不足：" + "；".join(
+                    c.reason for c in previous.condition_results if not c.data_sufficient
+                )
+                outcome.rules[rule.id] = ("insufficient_history", reason)
+                outcome.errors.append((rule.id, "insufficient_history", reason))
+                continue
+            if previous.is_met:
+                outcome.continuing += 1
                 continue
             indicators = {
                 f"{c.condition_id}.{k}": v

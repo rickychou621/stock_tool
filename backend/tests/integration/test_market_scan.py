@@ -117,8 +117,15 @@ def bars(ticker="1", days=DATES, volume=0):
     ]
 
 
+def entry_bars(ticker="1", days=DATES):
+    sample = bars(ticker, days)
+    # A dip below the midline followed by a recovery is a new entry event.
+    sample[-2].close = sample[-2].adj_close = sample[-2].low
+    return sample
+
+
 def success(factory, item, rules, *args):
-    return evaluate_stock(item[0], "股票" + item[0], item[1], rules, bars(item[0]), DATES)
+    return evaluate_stock(item[0], "股票" + item[0], item[1], rules, entry_bars(item[0]), DATES)
 
 
 def universe(db, day):
@@ -208,7 +215,7 @@ def test_bar_validation(change, expected):
 
 @pytest.mark.parametrize("lag", [0, 5, 6])
 def test_valid_quote_lag_zero_volume_and_engine_metrics(lag):
-    sample = bars(days=DATES if lag == 0 else DATES[:-lag])
+    sample = entry_bars(days=DATES if lag == 0 else DATES[:-lag])
     if lag == 6:
         with pytest.raises(ValueError, match="超過 5"):
             evaluate_stock("1", "股票", "stock", [rule()], sample, DATES)
@@ -222,7 +229,9 @@ def test_valid_quote_lag_zero_volume_and_engine_metrics(lag):
 
 
 def test_per_rule_insufficient_not_whole_stock():
-    result = evaluate_stock("1", "股票", "stock", [rule(), rule(2, "macd_positive")], bars(), DATES)
+    result = evaluate_stock(
+        "1", "股票", "stock", [rule(), rule(2, "macd_positive")], entry_bars(), DATES
+    )
     assert result.succeeded and result.insufficient and len(result.candidates) == 1
     assert result.rules[2][0] == "insufficient_history"
     assert required_days([rule(2, "macd_positive", {"long_period": 50})]) > required_days([rule()])

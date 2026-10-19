@@ -43,6 +43,7 @@ def publish(db, batch_id, outcomes, metadata):
     metadata = dict(
         metadata,
         normalCount=statuses.count("normal"),
+        continuing=sum(o.continuing for o in outcomes),
         abnormalCount=sum(s != "normal" for s in statuses),
     )
     db.merge(ScanPublication(id=1, metadata_json=metadata))
