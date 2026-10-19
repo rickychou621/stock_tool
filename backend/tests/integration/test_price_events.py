@@ -391,3 +391,14 @@ def test_write_failure_rolls_back_events_and_completion(factory, monkeypatch):
         assert db.scalar(select(StockPriceEvent)) is None
     monkeypatch.setattr(MarketDataService, "import_price_events", original)
     assert sync_market_price_events(factory, BEFORE, DAY, client=client).complete
+
+
+def test_finmind_blank_type_inferred_from_price_direction():
+    from app.data_source.price_events import parse_finmind
+
+    rows = [
+        dict(date="2026-03-31", stock_id="00631L", type="", before_price=443.15, after_price=20.14),
+        dict(date="2026-04-01", stock_id="9999", type="", before_price=10, after_price=40),
+    ]
+    events = parse_finmind(rows, date(2026, 1, 1), date(2026, 12, 31))
+    assert [e["event_type"] for e in events] == ["split", "reverse_split"]

@@ -28,12 +28,19 @@ def price_event(ticker, day, kind, before, reference, source, start, end):
     )
 
 
+def event_type(row):
+    # FinMind occasionally leaves type blank (00631L 2026-03-31); the price direction decides.
+    if row["type"] in TYPES:
+        return TYPES[row["type"]]
+    return "split" if float(row["after_price"]) < float(row["before_price"]) else "reverse_split"
+
+
 def parse_finmind(rows, start, end):
     return [
         price_event(
             str(r["stock_id"]).strip(),
             date.fromisoformat(r["date"]),
-            TYPES[r["type"]],
+            event_type(r),
             r["before_price"],
             r["after_price"],
             "finmind_split",
