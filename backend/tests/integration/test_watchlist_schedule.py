@@ -380,3 +380,52 @@ def test_scheduler_registers_one_job_and_next_fire_is_not_catchup(monkeypatch):
         assert next_fire == NOW + timedelta(days=1)
     finally:
         module.stop_scheduler()
+
+
+@pytest.fixture(autouse=True)
+def isolate_market_event_http(monkeypatch):
+    for method in ("price_events", "tpex_price_events"):
+        monkeypatch.setattr(f"app.data_source.twse_client.TwseBatchClient.{method}", lambda *a: [])
+    monkeypatch.setattr(
+        "app.data_source.finmind_client.FinMindClient.get_price_events", lambda *a, **kw: []
+    )
+
+
+def test_schedule_many_stocks_fetches_split_once_before_workers(factory, monkeypatch):
+    from app.data_source.finmind_client import FinMindClient
+
+    split = Mock(return_value=[])
+    monkeypatch.setattr(FinMindClient, "get_price_events", split)
+    with factory() as db:
+        for ticker in ("1", "2", "3"):
+            db.add(Stock(ticker=ticker, name=ticker, market="上市"))
+            db.add(HoldingsWatchlist(ticker=ticker))
+        db.commit()
+    calls = []
+
+    def worker(sessions, item, ticker, rules, day):
+        assert split.call_count == 1
+        client = Mock(
+            get_daily_price=Mock(return_value=[]), get_dividend_events=Mock(return_value=[])
+        )
+        with sessions() as db:
+            MarketDataService(db, client).sync_daily_prices(ticker)
+        client.get_price_events.assert_not_called()
+        calls.append(ticker)
+        return []
+
+    run(factory, worker=worker)
+    assert len(calls) == 4
+    split.assert_called_once()
+
+
+def test_event_failure_visible_in_schedule_errors(factory, monkeypatch):
+    monkeypatch.setattr(
+        "app.data_source.finmind_client.FinMindClient.get_price_events",
+        Mock(side_effect=RuntimeError("secret-token")),
+    )
+    run(factory)
+    with factory() as db:
+        errors = list(db.scalars(select(ScheduleError.reason)))
+        assert any("FinMind split" in e for e in errors)
+        assert "secret-token" not in str(errors)

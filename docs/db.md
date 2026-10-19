@@ -9,6 +9,8 @@
 | `stocks` | 上市櫃股票基本資料(主檔) |
 | `stock_price_daily` | 日K價量資料(原始股價 + 自算的還原股價) |
 | `stock_price_intraday` | 盤中分K價量資料(供左側爆量城牆K等歷史比對用) |
+| `stock_price_events` | 分割／反分割／面額變更／減資價格事件 |
+| `stock_price_event_sync` | 全市場價格事件每日同步狀態，單列 id=1 |
 | `stock_dividend_events` | 股利/增資事件,用來反推還原股價的調整係數 |
 | `condition_catalog` | 條件庫清單(供前端動態組裝規則時查詢可用條件與參數規格) |
 | `watch_rules` | 使用者組合的監控規則 |
@@ -233,3 +235,34 @@ watch_rules 1───N alerts_log
 | `market_scan_signal_meta` | 單例首次部署日；重複部署不改日期 |
 
 歷史與候選在同一交易發佈；回填在發佈提交後獨立執行。歷史永久保存，不隨最新掃描任務清理。同日重跑只更新最後批次與時間，不改首次快照。
+
+
+## 價格事件 Migration 013
+
+[013_price_events.sql](../mysql/init/013_price_events.sql) 可重複執行，新增 stock_price_events 與 stock_price_event_sync，不修改既有資料、排程或完整性紀錄。既有 DB 須先套用 migration，再補齊價格事件及重新回測。
+
+| 欄位 | 型別與用途 |
+|---|---|
+| id | INT 自增主鍵 |
+| ticker | VARCHAR(10)，外鍵 stocks.ticker，另有股票索引 |
+| event_date | DATE，恢復買賣日 |
+| event_type | VARCHAR(24)，split／reverse_split／par_value_change／capital_reduction |
+| before_close | DECIMAL(14,6)，來源提供的事件前收盤價 |
+| reference_price | DECIMAL(14,6)，來源提供的恢復買賣參考價 |
+| source | VARCHAR(32)，finmind_split／twse_twtauu／tpex_revivt |
+| created_at | DATETIME，UTC 建立時間 |
+
+唯一鍵為 ticker、event_date、event_type。新增或修正價格會在同一交易重算該股歷史 adj_*、增加 data_version 並標記 backtest_results.stale；0050 事件會讓全部舊回測過期。相同事件重送不重算；不同來源的相同事件共用唯一鍵，價格有修正時更新來源。
+
+還原係數為 reference_price ÷ before_close，僅作用於 event_date 之前的 OHLC，volume 不調整。股利與價格事件分表儲存，同日各自套用係數。
+
+
+stock_price_event_sync 單列同步紀錄：
+
+| 欄位 | 型別與用途 |
+|---|---|
+| id | INT 主鍵，固定 1，CHECK 約束 |
+| synced_on | DATE，台北同步日期 |
+| complete | BOOLEAN，預設 false；三來源及事件寫入皆成功才設 true |
+
+固定查詢 2011-01-01 至當天，因此不保存或比較呼叫者的 start/end。當天 complete=true 跳過全部來源，價格事件的 FinMind 每天最多 1 次；失敗保留 false，下次呼叫允許重試，不屬嚴格每日上限。MySQL advisory lock 序列化跨任務同步；失敗狀態先提交，事件與成功標記則在同一交易提交。只匯入 stocks 中已存在的 ticker，同步前確保基準 0050 主檔存在。

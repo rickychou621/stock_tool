@@ -2,8 +2,8 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.data_source.finmind_client import FinMindClient
-from app.market_data.models import Stock
-from app.market_data.price_adjustment import DividendEvent, PriceBar, apply_adjustment
+from app.market_data.models import Stock, StockPriceEvent
+from app.market_data.price_adjustment import DividendEvent, PriceBar, PriceEvent, apply_adjustment
 from app.market_data.repository import MarketDataRepository
 
 
@@ -14,7 +14,13 @@ class MarketDataService:
         self._client = client or FinMindClient()
 
     def sync_daily_prices(
-        self, ticker: str, days: int = 180, *, start_date=None, end_date=None, fetch_prices=True
+        self,
+        ticker: str,
+        days: int = 180,
+        *,
+        start_date=None,
+        end_date=None,
+        fetch_prices=True,
     ) -> int:
         if start_date is not None:
             return self._sync_validated_range(ticker, start_date, end_date, fetch_prices)
@@ -63,7 +69,8 @@ class MarketDataService:
         if validate and price_bars:
             latest = max(b.trade_date for b in price_bars)
             dividend_events = [e for e in dividend_events if e.ex_dividend_date <= latest]
-        adjusted_by_date = apply_adjustment(price_bars, dividend_events)
+        price_events = self.load_price_events(ticker)
+        adjusted_by_date = apply_adjustment(price_bars, dividend_events, price_events)
         if validate:
             from app.market_data.validation import valid_ohlcv
 
@@ -185,6 +192,11 @@ class MarketDataService:
                 StockDividendEvent.ticker.in_(tickers)
             )
         ).all()
+        event_dates += self._db.execute(
+            select(StockPriceEvent.ticker, StockPriceEvent.event_date).where(
+                StockPriceEvent.ticker.in_(tickers)
+            )
+        ).all()
         later_events = {t for t, ex in event_dates if day < ex <= latest.get(t, day)}
         # Filling a missing historical day after the last known dividend cannot
         # change any adjustment factor. Its raw OHLC is already the correct basis.
@@ -233,3 +245,66 @@ class MarketDataService:
         finally:
             self._repository = original
         return warnings
+
+    def load_price_events(self, ticker):
+        return [
+            PriceEvent(e.event_date, float(e.before_close), float(e.reference_price))
+            for e in self._db.scalars(
+                select(StockPriceEvent).where(StockPriceEvent.ticker == ticker)
+            )
+        ]
+
+    def store_price_events(self, ticker, rows):
+        """Caller owns the transaction; corrections invalidate old backtests too."""
+        from decimal import Decimal
+
+        from app.backtest.models import BacktestResult
+
+        self._db.execute(select(Stock.id).where(Stock.ticker == ticker).with_for_update())
+        existing = {
+            (e.event_date, e.event_type): e
+            for e in self._db.scalars(
+                select(StockPriceEvent).where(StockPriceEvent.ticker == ticker)
+            )
+        }
+        changed = False
+        for row in rows:
+            if row["ticker"] != ticker:
+                raise ValueError("價格事件代號不符")
+            key = row["event_date"], row["event_type"]
+            old = existing.get(key)
+            if old is None:
+                old = StockPriceEvent(**row)
+                existing[key] = old
+                self._db.add(old)
+                changed = True
+            elif any(
+                Decimal(str(getattr(old, k))) != Decimal(str(row[k]))
+                for k in ("before_close", "reference_price")
+            ):
+                old.before_close, old.reference_price = row["before_close"], row["reference_price"]
+                old.source = row["source"]
+                changed = True
+        if changed:
+            self._db.flush()
+            self._db.execute(
+                update(Stock)
+                .where(Stock.ticker == ticker)
+                .values(data_version=Stock.data_version + 1)
+            )
+            stmt = update(BacktestResult).values(stale=True)
+            if ticker != "0050":
+                stmt = stmt.where(BacktestResult.ticker == ticker)
+            self._db.execute(stmt)
+        return changed
+
+    def import_price_events(self, ticker, rows):
+        from app.market_data.repository import MarketDataRepository
+
+        original = self._repository
+        self._repository = MarketDataRepository(self._db, commit=False)
+        try:
+            if self.store_price_events(ticker, rows):
+                self._recalculate_adjusted_prices(ticker, validate=True)
+        finally:
+            self._repository = original

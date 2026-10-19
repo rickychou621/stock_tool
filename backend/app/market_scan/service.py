@@ -110,7 +110,7 @@ class MarketScanManager:
         self.executor = None
 
     def start(self, rule_ids=None, *, kind="scan", source="manual", now=None, mode="prices"):
-        if mode not in ("prices", "dividends"):
+        if mode not in ("prices", "dividends", "price_events"):
             raise ValueError("初始化模式無效")
         lease = acquire(self.factory)
         if lease is None:

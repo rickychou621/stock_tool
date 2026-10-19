@@ -147,4 +147,7 @@ def prepare_data(db, ticker, start, end, trading_dates):
             )
         )
     ]
+    events.extend(
+        e for e in MarketDataService(db).load_price_events(ticker) if start <= e.event_date <= end
+    )
     return raw, events

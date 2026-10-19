@@ -123,3 +123,91 @@ class TwseBatchClient:
             timeout=40,
         )
         return parse_events(response.json(), start, end)
+
+    def price_events(self, start, end):
+        response = get(
+            BASE + "TWTAUU",
+            params={
+                "response": "json",
+                "startDate": start.strftime("%Y%m%d"),
+                "endDate": end.strftime("%Y%m%d"),
+            },
+            timeout=40,
+        )
+        return parse_price_events(response.json(), start, end)
+
+    def tpex_price_events(self, start, end):
+        response = get(
+            "https://www.tpex.org.tw/www/zh-tw/bulletin/revivt",
+            params={
+                "response": "json",
+                "startDate": start.strftime("%Y/%m/%d"),
+                "endDate": end.strftime("%Y/%m/%d"),
+            },
+            timeout=40,
+        )
+        return parse_tpex_price_events(response.json(), start, end)
+
+
+def parse_price_events(payload, start, end):
+    from app.data_source.price_events import price_event
+
+    if payload.get("stat") == "很抱歉，沒有符合條件的資料!":
+        return []
+    if payload.get("stat") != "OK":
+        raise ValueError("證交所減資事件尚未取得")
+    fields = payload.get("fields", [])
+    if not {"恢復買賣日期", "股票代號", "停止買賣前收盤價格", "恢復買賣參考價"} <= set(fields):
+        raise ValueError("證交所減資欄位不完整")
+    events = []
+    for cells in payload.get("data", []):
+        row = dict(zip(fields, cells, strict=True))
+        parts = re.findall(r"\d+", row["恢復買賣日期"])
+        if len(parts) != 3:
+            raise ValueError("證交所減資日期格式異常")
+        y, m, d = map(int, parts)
+        events.append(
+            price_event(
+                str(row["股票代號"]).strip(),
+                date(y + 1911 if y < 1911 else y, m, d),
+                "capital_reduction",
+                row["停止買賣前收盤價格"],
+                row["恢復買賣參考價"],
+                "twse_twtauu",
+                start,
+                end,
+            )
+        )
+    return events
+
+
+def parse_tpex_price_events(payload, start, end):
+    from app.data_source.price_events import price_event
+
+    if payload.get("stat") != "ok":
+        raise ValueError("櫃買減資事件尚未取得")
+    required = {"恢復買賣日期", "股票代號", "最後交易日之收盤價格", "減資恢復買賣開始日參考價格"}
+    tables = [t for t in payload.get("tables", []) if required <= set(t.get("fields", []))]
+    if len(tables) != 1:
+        raise ValueError("櫃買減資欄位不完整")
+    table = tables[0]
+    events = []
+    for cells in table["data"]:
+        row = dict(zip(table["fields"], cells, strict=True))
+        value = str(row["恢復買賣日期"]).strip()
+        if not re.fullmatch(r"\d{7}", value):
+            raise ValueError("櫃買減資日期格式異常")
+        day = date(int(value[:3]) + 1911, int(value[3:5]), int(value[5:]))
+        events.append(
+            price_event(
+                str(row["股票代號"]).strip(),
+                day,
+                "capital_reduction",
+                row["最後交易日之收盤價格"],
+                row["減資恢復買賣開始日參考價格"],
+                "tpex_revivt",
+                start,
+                end,
+            )
+        )
+    return events

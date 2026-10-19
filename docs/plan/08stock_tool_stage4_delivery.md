@@ -136,3 +136,22 @@ docker compose -f docker-compose.yaml -f docker-compose.dev.yaml exec -T backend
 新增測試涵蓋進場事件的候選與訊號歷史各一筆、連日符合不寫入且 continuing 加一、前日資料不足、今日不符合、個股缺交易行情時使用前一有效日，以及觀察清單連日符合仍通過。既有掃描測試行情改為明確的進場樣本，較舊行情測試保留原驗證目的。
 
 驗證結果：在 backend 執行 `DB_PASSWORD=test TELEGRAM_BOT_TOKEN= TELEGRAM_CHAT_ID= /tmp/stock-venv/bin/python -m pytest -q --disable-warnings`，189 passed、4196 warnings，28.05 秒；`/tmp/stock-venv/bin/ruff check .` 通過。在 frontend 執行 `npm ci --cache .npm-cache` 後，`npx --cache .npm-cache tsc -b && npx --cache .npm-cache eslint .` 通過，暫存快取已移除。首次 npm ci 因使用者目錄快取唯讀失敗，改用工作目錄快取後成功；安裝回報既有依賴 9 個漏洞，未擴大範圍升級依賴。未執行瀏覽器或真實市場掃描，未操作容器、既有 DB、commit、push 或 PR。
+## 2026-10-19：分割／減資還原
+
+本次依使用者同意，新增階段四「還原算法不動」的例外。股利公式保持原狀，另將分割、反分割、面額變更與減資價格事件納入歷史 OHLC 還原；volume 不變。同日股利與價格事件各套一次係數。
+
+新增 [013_price_events.sql](../../mysql/init/013_price_events.sql)，以 ticker、event_date、event_type 唯一保存來源前收盤與參考價。新增或修正事件時，在同一交易重算該股全部 adj_*、增加資料版本並標記舊回測 stale。0050 更新會標記全部舊回測過期；相同事件重送不重算。
+
+初始化 API 的 price_events mode 只補價格事件；dividends mode 同時補股利與價格事件。18:00 觀察清單整批開始、手動回測確認交易日後、全市場掃描與上述初始化共用 sync_market_price_events。逐檔行情同步與 prepare_data 不查價格事件來源，0050 基準也只使用 DB 事件。
+
+固定全範圍為 2011-01-01 至台北當天。FinMind TaiwanStockSplitPrice 不帶 data_id，TWSE TWTAUU 與 TPEx revivt 各全市場一次；不再使用 FinMind 逐檔減資。013 新增 stock_price_event_sync，記錄 id=1、synced_on、complete。互斥鎖保護檢查至寫入；三來源及寫入皆成功才 complete=true。當天已完成跳過全部來源，正常情況價格事件的 FinMind 每天最多 1 次；失敗本次不重試，下次任務可重試，因此失敗日不是嚴格上限。行情、股利的 FinMind 用量另計。
+
+TWTAUU 先前實測 2011-01-01～2026-10-19 一次回 402 筆。TPEx 本次實測新網址 `/www/zh-tw/bulletin/revivt`，參數 startDate=2011/01/01、endDate=2026/10/19、response=json，一次回 296 筆、stat=ok，不需分段。日期如 1020116 轉為 2013-01-16，欄位依名稱解析。交易所共用 twse_client limiter。同步先建立缺少的 0050 主檔，其他未知 ticker 忽略，只有事件變動才重算。
+
+任一來源失敗，本次不寫事件及 DividendCoverage，保留 complete=false。錯誤寫入回測任務 errors、觀察清單 ScheduleError／日誌或掃描 warnings，不包含 FinMind token。既有事件可繼續使用，但不能當成這次完整性證明。
+
+先前公開資料算法核對：0050 在 2025-06-10 原始收盤 188.65，單套分割後 47.16；再含截至 2026-10-15 股利為 45.89894。2023-10-16 開盤至 2026-10-15 收盤買進持有報酬為 +269.54279%。本次保留原還原算法並補測同類 +269.5% 案例；此數字不是本次對使用者 DB 的回測結果。
+
+驗證涵蓋排程多檔只查一次、同日第二次回測跳過三來源、prepare_data 不查價格事件、TPEx 日期與欄位、來源失敗後重試、未知代號略過、0050 分割／基準與 stale。backend 全套 pytest 結果為 215 passed；ruff check、frontend tsc -b 與 eslint 均通過。另涵蓋並行任務只抓一次及事件寫入失敗回滾。
+
+未操作容器或使用者 DB，未套用 MySQL migration；部署時需先套用 013，再補齊事件及重新回測。未變動戰法、訊號追蹤口徑、排程時間；未 commit、push 或開 PR。

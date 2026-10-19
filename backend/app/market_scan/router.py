@@ -74,7 +74,7 @@ def save(values: SettingsInput, db: Session = Depends(get_db)):
 
 
 class InitializeInput(StartInput):
-    mode: Literal["prices", "dividends"] = "prices"
+    mode: Literal["prices", "dividends", "price_events"] = "prices"
 
 
 def start(values, kind):

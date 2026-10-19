@@ -12,7 +12,9 @@ FINMIND_BASE_URL = "https://api.finmindtrade.com/api/v4/data"
 def _fetch(
     dataset: str, ticker: str, start_date: date | None = None, end_date: date | None = None
 ) -> list[dict]:
-    params: dict[str, str] = {"dataset": dataset, "data_id": ticker}
+    params: dict[str, str] = {"dataset": dataset}
+    if ticker:
+        params["data_id"] = ticker
     if start_date:
         params["start_date"] = start_date.isoformat()
 
@@ -103,3 +105,11 @@ class FinMindClient:
                 }
             )
         return events
+
+    def get_price_events(self, *, start_date, end_date):
+        from app.data_source.price_events import parse_finmind
+
+        self.before_request()
+        return parse_finmind(
+            _fetch("TaiwanStockSplitPrice", "", start_date, end_date), start_date, end_date
+        )

@@ -10,6 +10,7 @@ from sqlalchemy import select
 from app.data_source.finmind_client import FinMindClient
 from app.data_source.twse_client import TwseBatchClient
 from app.market_data.models import StockDividendEvent, StockPriceDaily
+from app.market_data.price_event_sync import sync_market_price_events
 from app.market_data.service import MarketDataService
 from app.market_data.validation import valid_ohlcv
 from app.market_scan.data import required_days
@@ -43,7 +44,7 @@ def synchronize(
 ):
     client = client or TwseBatchClient()
     started = monotonic()
-    counts = dict(mi=0, events=0, finmind=0)
+    counts = dict(mi=0, events=0, finmind=0, price_events=0, tpex=0)
     warnings, errors = [], []
     days = (
         dates[-6:]
@@ -57,9 +58,23 @@ def synchronize(
         limiter.acquire()
         counts["finmind"] += 1
 
+    price_complete = True
     if kind == "scan" or mode != "prices":
+        verify()
+        if progress:
+            progress("批次行情 全市場價格事件同步")
+        result = sync_market_price_events(
+            factory, days[0], days[-1], before_finmind=before_finmind, client=client
+        )
+        verify()
+        price_complete = result.complete
+        warnings.extend(result.warnings)
+        counts["price_events"] = result.twse_requests
+        counts["tpex"] = result.tpex_requests
+
+    if kind == "scan" or mode not in ("prices", "price_events"):
         all_events = set()
-        complete = True
+        complete = price_complete
         for start, end in event_ranges(days, kind):
             verify()
             if progress:
@@ -92,7 +107,10 @@ def synchronize(
                     service = MarketDataService(db, FinMindClient(before_request=before_finmind))
                     # One FinMind request per ticker across all missing months.
                     service.sync_daily_prices(
-                        ticker, start_date=min(ex_dates), end_date=max(ex_dates), fetch_prices=False
+                        ticker,
+                        start_date=min(ex_dates),
+                        end_date=max(ex_dates),
+                        fetch_prices=False,
                     )
                     found = set(
                         db.scalars(
@@ -130,10 +148,10 @@ def synchronize(
                 db.commit()
         if not complete or failed:
             warnings.append("還原資料未完整：未確認的標的不會列為正常戰法命中，請稍後補齊股利")
-    else:
+    elif mode == "prices":
         warnings.append("本次只下載行情，未補股利；還原資料未完整的標的不會列為正常戰法命中")
 
-    price_days = [] if kind == "initialize" and mode == "dividends" else days
+    price_days = [] if kind == "initialize" and mode in ("dividends", "price_events") else days
     for index, day in enumerate(price_days):
         verify()
         eligible = {t for t, listed in active.items() if listed <= day}
@@ -178,6 +196,8 @@ def synchronize(
             )
     warnings.append(
         f"批次資料完成：MI_INDEX {counts['mi']} 次、TWT49U {counts['events']} 次、"
-        f"FinMind {counts['finmind']} 次，耗時 {monotonic() - started:.1f} 秒"
+        f"TWTAUU {counts['price_events']} 次、TPEx {counts['tpex']} 次、"
+        f"FinMind {counts['finmind']} 次，"
+        f"耗時 {monotonic() - started:.1f} 秒"
     )
     return warnings, errors

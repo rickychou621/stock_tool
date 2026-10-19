@@ -2,13 +2,14 @@
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
 from app.core.db import SessionLocal
+from app.market_data.price_event_sync import sync_market_price_events
 from app.scheduler.calendar import TwseCalendar
 from app.scheduler.coordination import coordinator_lock
 from app.scheduler.models import ScheduleError, ScheduleRun
@@ -80,6 +81,17 @@ def _run_daily_watchlist(
     try:
         if calendar_error:
             raise ValueError(calendar_error)
+        event_sync = sync_market_price_events(session_factory, day - timedelta(days=730), day)
+        if event_sync.warnings:
+            with session_factory() as db:
+                for warning in event_sync.warnings:
+                    logger.warning("Watchlist price events: %s", warning)
+                    db.add(
+                        ScheduleError(
+                            batch_id=batch, ticker=None, occurred_at=utcnow(), reason=warning
+                        )
+                    )
+                db.commit()
         with ThreadPoolExecutor(max_workers=3, thread_name_prefix="watchlist") as pool:
             futures = {
                 pool.submit(

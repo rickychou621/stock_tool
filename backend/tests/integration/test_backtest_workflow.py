@@ -326,3 +326,60 @@ def test_current_month_cache_refreshes_when_requested_end_advances(
     )
     assert load_trading_dates(factory, DAY, date(2026, 10, 13))[-1] == date(2026, 10, 13)
     assert route.call_count == 2
+
+
+@pytest.fixture(autouse=True)
+def isolate_market_event_http(monkeypatch):
+    for method in ("price_events", "tpex_price_events"):
+        monkeypatch.setattr(f"app.data_source.twse_client.TwseBatchClient.{method}", lambda *a: [])
+    monkeypatch.setattr(
+        "app.data_source.finmind_client.FinMindClient.get_price_events", lambda *a, **kw: []
+    )
+
+
+def test_second_backtest_skips_all_event_sources_and_includes_0050(factory, monkeypatch):
+    from app.data_source.finmind_client import FinMindClient
+    from app.data_source.twse_client import TwseBatchClient
+    from app.market_data.models import StockPriceEvent
+
+    split = Mock(
+        return_value=[
+            dict(
+                ticker="0050",
+                event_date=DAY,
+                event_type="split",
+                before_close=100,
+                reference_price=25,
+                source="finmind_split",
+            )
+        ]
+    )
+    twse, tpex = Mock(return_value=[]), Mock(return_value=[])
+    monkeypatch.setattr(FinMindClient, "get_price_events", split)
+    monkeypatch.setattr(TwseBatchClient, "price_events", twse)
+    monkeypatch.setattr(TwseBatchClient, "tpex_price_events", tpex)
+    manager = make_manager(factory)
+    manager.start([1], now=NOW)
+    manager.close()
+    counts = split.call_count, twse.call_count, tpex.call_count
+    assert counts == (1, 1, 1)
+    manager.start([1], now=NOW)
+    manager.close()
+    assert (split.call_count, twse.call_count, tpex.call_count) == counts
+    with factory() as db:
+        assert db.scalar(select(StockPriceEvent.ticker)) == "0050"
+        assert db.get(BacktestTask, 1).errors == []
+
+
+def test_event_failure_visible_in_backtest_errors(factory, monkeypatch):
+    monkeypatch.setattr(
+        "app.data_source.finmind_client.FinMindClient.get_price_events",
+        Mock(side_effect=RuntimeError("secret-token")),
+    )
+    manager = make_manager(factory)
+    manager.start([1], now=NOW)
+    manager.close()
+    with factory() as db:
+        errors = db.get(BacktestTask, 1).errors
+        assert any("FinMind split" in e["reason"] for e in errors)
+        assert "secret-token" not in str(errors)

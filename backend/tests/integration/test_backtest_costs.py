@@ -1,6 +1,7 @@
 # ruff: noqa: F811 -- shared pytest fixture
 from unittest.mock import Mock
 
+import pytest
 from sqlalchemy import select
 from test_backtest_workflow import DATES, NOW, factory, payload, success  # noqa: F401
 
@@ -57,3 +58,12 @@ def test_benchmark_missing_does_not_require_watchlist_or_fail_strategy(factory, 
     prepare.assert_called_once()
     with factory() as db:
         assert db.scalar(select(Stock).where(Stock.ticker == "0050")) is not None
+
+
+@pytest.fixture(autouse=True)
+def isolate_market_event_http(monkeypatch):
+    for method in ("price_events", "tpex_price_events"):
+        monkeypatch.setattr(f"app.data_source.twse_client.TwseBatchClient.{method}", lambda *a: [])
+    monkeypatch.setattr(
+        "app.data_source.finmind_client.FinMindClient.get_price_events", lambda *a, **kw: []
+    )

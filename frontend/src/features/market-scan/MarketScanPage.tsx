@@ -210,9 +210,9 @@ export function MarketScanPage() {
     },
   })
   const start = useMutation({
-    mutationFn: (kind: 'run' | 'initialize' | 'dividends') =>
-      apiClient.post(`/market-scan/${kind === 'dividends' ? 'initialize' : kind}`, {
-        ruleIds: selected, ...(kind === 'run' ? {} : { mode: kind === 'dividends' ? 'dividends' : 'prices' }),
+    mutationFn: (kind: 'run' | 'initialize' | 'dividends' | 'price_events') =>
+      apiClient.post(`/market-scan/${kind === 'dividends' || kind === 'price_events' ? 'initialize' : kind}`, {
+        ruleIds: selected, ...(kind === 'run' ? {} : { mode: kind === 'initialize' ? 'prices' : kind }),
       }),
     onSuccess: async () => {
       await client.invalidateQueries({ queryKey: ['market-tasks'] })
@@ -317,6 +317,9 @@ export function MarketScanPage() {
         </div>
         <button className="button-add" disabled={busy || !selected.length || !tasks.data || !settings.data}
           onClick={() => start.mutate('dividends')}>補齊歷史股利</button>
+        <button className="button-add" disabled={busy || !selected.length || !tasks.data || !settings.data}
+          onClick={() => start.mutate('price_events')}>補齊分割／減資</button>
+        <p className="muted">補齊歷史股利也會補價格事件；補齊分割／減資只更新價格事件與還原價，不下載行情或股利。完成後請重新回測。</p>
         <Progress task={tasks.data?.initialize} />
         <Errors
           kind="initialize"

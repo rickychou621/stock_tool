@@ -20,6 +20,13 @@ from app.market_scan.rate_limit import RateLimiter
 from app.market_scan.worker import evaluate_stock
 
 
+@pytest.fixture(autouse=True)
+def no_new_price_sources(monkeypatch):
+    # These existing cases isolate dividends/quotes; dedicated price-event tests
+    # exercise the new HTTP sources separately.
+    monkeypatch.setattr(FinMindClient, "get_price_events", lambda *a, **kw: [])
+
+
 def source(day=DAY, cells=None):
     return {
         "stat": "OK",
@@ -138,9 +145,7 @@ def test_historical_import_does_not_rewrite_unchanged_adjusted_prices(factory):
         with factory() as db:
             MarketDataService(db).import_market_day(DAY, [raw()])
             db.commit()
-            old = db.scalar(
-                select(StockPriceDaily).where(StockPriceDaily.trade_date == previous)
-            )
+            old = db.scalar(select(StockPriceDaily).where(StockPriceDaily.trade_date == previous))
             assert old.adj_open == Decimal("9.09")
             assert old.adj_close == Decimal("10.00")
     finally:
@@ -162,18 +167,14 @@ def test_missing_historical_day_uses_known_future_dividends(factory, with_event)
         db.commit()
         service.import_market_day(missing, [raw(missing, close=12)])
         db.commit()
-        inserted = db.scalar(
-            select(StockPriceDaily).where(StockPriceDaily.trade_date == missing)
-        )
-        earlier = db.scalar(
-            select(StockPriceDaily).where(StockPriceDaily.trade_date == previous)
-        )
+        inserted = db.scalar(select(StockPriceDaily).where(StockPriceDaily.trade_date == missing))
+        earlier = db.scalar(select(StockPriceDaily).where(StockPriceDaily.trade_date == previous))
         assert inserted.adj_close == Decimal("11.00" if with_event else "12.00")
         assert earlier.adj_close == Decimal("10.08" if with_event else "11.00")
 
 
 def test_six_days_batch_then_only_new_day_and_absence_is_cached(factory):
-    client = Mock()
+    client = Mock(price_events=Mock(return_value=[]), tpex_price_events=Mock(return_value=[]))
     client.events.return_value = []
     client.daily.side_effect = lambda day, active: ([raw(day)], {"2"}, {})
     warnings, errors = run(factory, client)
@@ -188,7 +189,7 @@ def test_six_days_batch_then_only_new_day_and_absence_is_cached(factory):
 
 
 def test_invalid_is_not_confirmed_absent_and_write_failure_has_no_coverage(factory, monkeypatch):
-    client = Mock()
+    client = Mock(price_events=Mock(return_value=[]), tpex_price_events=Mock(return_value=[]))
     client.events.return_value = []
     client.daily.return_value = ([raw()], set(), {"2": "無效 OHLC"})
     run(factory, client, dates=[DAY])
@@ -208,7 +209,7 @@ def test_invalid_is_not_confirmed_absent_and_write_failure_has_no_coverage(facto
 
 
 def test_unpublished_no_retry_or_finmind_fallback_and_older_quote(factory, monkeypatch):
-    client = Mock()
+    client = Mock(price_events=Mock(return_value=[]), tpex_price_events=Mock(return_value=[]))
     client.events.return_value = []
     client.daily.side_effect = ValueError("未發布")
     finmind = Mock(side_effect=AssertionError("must not fetch per-stock prices"))
@@ -228,7 +229,7 @@ def test_unpublished_no_retry_or_finmind_fallback_and_older_quote(factory, monke
 
 
 def test_initialization_reuses_valid_prices_and_monthly_events(factory):
-    client = Mock()
+    client = Mock(price_events=Mock(return_value=[]), tpex_price_events=Mock(return_value=[]))
     client.events.return_value = []
     client.daily.side_effect = lambda day, active: ([raw(day, t) for t in active], set(), {})
     with factory() as db:
@@ -256,7 +257,7 @@ def test_events_only_missing_active_stock_and_mismatch_warning(factory, monkeypa
     with factory() as db:
         db.add(StockDividendEvent(ticker="1", ex_dividend_date=DAY, cash_dividend=1))
         db.commit()
-    client = Mock()
+    client = Mock(price_events=Mock(return_value=[]), tpex_price_events=Mock(return_value=[]))
     client.events.return_value = [("1", DAY), ("2", DAY), ("inactive", DAY)]
     client.daily.return_value = ([], {"1", "2"}, {})
     sync = Mock()
@@ -309,7 +310,7 @@ def test_finmind_bearer_token_and_sanitized_error(respx_mock, monkeypatch, token
 
 
 def test_prices_only_never_requests_dividends(factory):
-    client = Mock()
+    client = Mock(price_events=Mock(return_value=[]), tpex_price_events=Mock(return_value=[]))
     client.daily.return_value = ([raw()], {"2"}, {})
     synchronize(
         factory,
@@ -330,7 +331,7 @@ def test_dividends_aggregate_months_one_call_per_stock(factory, monkeypatch):
     from app.market_scan.models import DividendCoverage
 
     days = [date(2026, 8, 3), date(2026, 9, 3), DAY]
-    client = Mock()
+    client = Mock(price_events=Mock(return_value=[]), tpex_price_events=Mock(return_value=[]))
     client.events.side_effect = [[("1", day)] for day in days]
     calls = []
 
@@ -352,7 +353,16 @@ def test_dividends_aggregate_months_one_call_per_stock(factory, monkeypatch):
         client=client,
         mode="dividends",
     )
-    assert calls == [("1", dict(start_date=days[0], end_date=days[-1], fetch_prices=False))]
+    assert calls == [
+        (
+            "1",
+            dict(
+                start_date=days[0],
+                end_date=days[-1],
+                fetch_prices=False,
+            ),
+        )
+    ]
     client.daily.assert_not_called()
     with factory() as db:
         assert db.get(DividendCoverage, "1").start_date == days[0]
@@ -379,7 +389,7 @@ def test_missing_dividends_cannot_publish_normal_match(factory):
 def test_failed_event_detection_never_marks_complete(factory):
     from app.market_scan.models import DividendCoverage
 
-    client = Mock()
+    client = Mock(price_events=Mock(return_value=[]), tpex_price_events=Mock(return_value=[]))
     client.events.side_effect = ValueError("source unavailable")
     warnings, _ = synchronize(
         factory,
@@ -401,7 +411,7 @@ def test_failed_event_detection_never_marks_complete(factory):
 def test_missing_finmind_event_is_not_marked_complete(factory, monkeypatch):
     from app.market_scan.models import DividendCoverage
 
-    client = Mock()
+    client = Mock(price_events=Mock(return_value=[]), tpex_price_events=Mock(return_value=[]))
     client.events.return_value = [("1", DAY)]
     monkeypatch.setattr(MarketDataService, "sync_daily_prices", Mock())
     synchronize(

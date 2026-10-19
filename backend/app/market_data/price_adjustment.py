@@ -34,6 +34,18 @@ class DividendEvent:
     cash_capital_increase_price: float = 0.0
 
 
+@dataclass(frozen=True)
+class PriceEvent:
+    event_date: date
+    before_close: float
+    reference_price: float
+
+    @property
+    def ex_dividend_date(self):
+        # Shared chronological event stream used by point-in-time backtests.
+        return self.event_date
+
+
 def calculate_adjustment_factor(prev_close: float, event: DividendEvent) -> float:
     denominator = 1 + event.stock_dividend_ratio + event.cash_capital_increase_ratio
     numerator = (
@@ -55,13 +67,13 @@ def _find_prev_close(sorted_bars: list[PriceBar], ex_dividend_date: date) -> flo
 
 
 def apply_adjustment(
-    bars: list[PriceBar], events: list[DividendEvent]
+    bars: list[PriceBar], events: list[DividendEvent], price_events=()
 ) -> dict[date, dict[str, float]]:
     """回傳 {日期: {open, high, low, close}} 的還原股價結果。
     最新一段(還沒發生過除權息事件之前)維持跟原始股價一樣，
     往回每跨過一次事件的除權息日，之前的股價就再乘上該事件的調整係數。"""
     sorted_bars = sorted(bars, key=lambda b: b.trade_date)
-    sorted_events = sorted(events, key=lambda e: e.ex_dividend_date)
+    sorted_events = sorted([*events, *price_events], key=lambda e: e.ex_dividend_date)
 
     adjusted: dict[date, dict[str, float]] = {}
     cumulative_factor = 1.0
@@ -70,6 +82,10 @@ def apply_adjustment(
     for bar in reversed(sorted_bars):
         while event_idx >= 0 and sorted_events[event_idx].ex_dividend_date > bar.trade_date:
             event = sorted_events[event_idx]
+            if isinstance(event, PriceEvent):
+                cumulative_factor *= event.reference_price / event.before_close
+                event_idx -= 1
+                continue
             prev_close = _find_prev_close(sorted_bars, event.ex_dividend_date)
             if prev_close is not None and prev_close > 0:
                 cumulative_factor *= calculate_adjustment_factor(prev_close, event)

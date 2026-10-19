@@ -33,7 +33,7 @@ class Stock(Base):
 
 class StockPriceDaily(Base):
     """日K(來源:FinMind TaiwanStockPrice／TWSE MI_INDEX，未還原成交價)。
-    adj_*欄位是自己用股利事件(見StockDividendEvent)反推的還原股價，
+    adj_*欄位以股利與價格事件(StockDividendEvent / StockPriceEvent)反推還原股價，
     圖表/技術指標一律應該用adj_*欄位，raw的open/high/low/close保留原始成交價當歷史紀錄。"""
 
     __tablename__ = "stock_price_daily"
@@ -86,3 +86,25 @@ class StockPriceIntraday(Base):
     low: Mapped[float] = mapped_column(Numeric(10, 2))
     close: Mapped[float] = mapped_column(Numeric(10, 2))
     volume: Mapped[int] = mapped_column(BigInteger)
+
+
+class StockPriceEvent(Base):
+    __tablename__ = "stock_price_events"
+    __table_args__ = (UniqueConstraint("ticker", "event_date", "event_type"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticker: Mapped[str] = mapped_column(String(10), ForeignKey("stocks.ticker"), index=True)
+    event_date: Mapped[date] = mapped_column(Date)
+    event_type: Mapped[str] = mapped_column(String(24))
+    before_close: Mapped[float] = mapped_column(Numeric(14, 6))
+    reference_price: Mapped[float] = mapped_column(Numeric(14, 6))
+    source: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class StockPriceEventSync(Base):
+    __tablename__ = "stock_price_event_sync"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    synced_on: Mapped[date] = mapped_column(Date)
+    complete: Mapped[bool] = mapped_column(Boolean, default=False)

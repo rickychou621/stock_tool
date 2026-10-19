@@ -17,6 +17,7 @@ from app.backtest.simulation import metrics, simulate
 from app.core.config import get_settings
 from app.core.db import SessionLocal
 from app.market_data.models import Stock
+from app.market_data.price_event_sync import sync_market_price_events
 from app.market_scan.models import MarketInstrument
 from app.rules.models import WatchRule
 from app.rules.preparation import history_days
@@ -226,6 +227,15 @@ class BacktestManager:
                     db.execute(select(MarketInstrument.ticker, MarketInstrument.kind)).all()
                 )
                 db.commit()
+            event_sync = sync_market_price_events(self.sessions, warm_start, end)
+            if event_sync.warnings:
+                with self.sessions() as db:
+                    task = db.get(BacktestTask, 1)
+                    task.errors = [
+                        *task.errors,
+                        *[{"ticker": None, "reason": warning} for warning in event_sync.warnings],
+                    ]
+                    db.commit()
             benchmark = self.benchmark_loader(self.sessions, warm_start, end, dates)
             with self.sessions() as db:
                 task = db.get(BacktestTask, 1)
