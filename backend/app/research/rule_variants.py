@@ -424,7 +424,8 @@ def process_stock(
 
 def run_research(args, factory=SessionLocal):
     started = time.perf_counter()
-    start = years_ago(args.end, args.years)
+    # --start overrides --years when the DB history is shorter than the default window.
+    start = getattr(args, "start", None) or years_ago(args.end, args.years)
     costs = TradingCosts.from_settings(get_settings())
     with factory() as db:
         tickers = load_universe(db, args.universe)
@@ -432,7 +433,9 @@ def run_research(args, factory=SessionLocal):
         kinds = dict(db.execute(select(MarketInstrument.ticker, MarketInstrument.kind)).all())
         listed = dict(db.execute(select(MarketInstrument.ticker, MarketInstrument.listed_on)).all())
         absent = {c.trade_date: set(c.absent_tickers) for c in db.scalars(select(BatchCoverage))}
-        warm = start - timedelta(days=history_days(rule))
+        # history_days is a conservative cross-rule default (276 days for rule 1); a shorter
+        # --warm-days is valid when it still covers the rule's indicator lookback.
+        warm = start - timedelta(days=getattr(args, "warm_days", None) or history_days(rule))
         calendar_reason = None
         try:
             dates = load_calendar(db, warm, args.end)
@@ -522,6 +525,8 @@ def main(argv=None):
         "--end", type=date.fromisoformat, default=taipei_today() - timedelta(days=1)
     )
     parser.add_argument("--years", type=positive_int, default=3)
+    parser.add_argument("--start", type=date.fromisoformat, default=None)
+    parser.add_argument("--warm-days", type=positive_int, default=None)
     parser.add_argument("--workers", type=positive_int, default=4)
     parser.add_argument("--out-json", type=Path, required=True)
     parser.add_argument("--out-md", type=Path, required=True)
