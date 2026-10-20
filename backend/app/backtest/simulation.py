@@ -157,13 +157,26 @@ def simulate(
                 date=day.isoformat(),
                 state=state,
                 isMet=met,
+                premiseMet=evaluated.premise_met,
+                entryTriggered=evaluated.entry_triggered,
+                exitTriggered=evaluated.exit_triggered,
                 conditions=[asdict(c) for c in evaluated.condition_results],
             )
         )
-        if position is not None and not met:
-            pending = {"side": "sell", "date": day.isoformat()}
-        elif position is None and met and not prior:
-            pending = {"side": "buy", "date": day.isoformat()}
+        if position is not None:
+            should_sell = (
+                evaluated.exit_triggered if evaluated.exit_triggered is not None else not met
+            )
+            if should_sell:
+                pending = {"side": "sell", "date": day.isoformat()}
+        else:
+            should_buy = (
+                evaluated.premise_met and evaluated.entry_triggered
+                if evaluated.entry_triggered is not None
+                else met and not prior
+            )
+            if should_buy:
+                pending = {"side": "buy", "date": day.isoformat()}
         prior = met
         ever_matched = ever_matched or met
     if actual_start is None:
