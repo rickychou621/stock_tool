@@ -23,6 +23,7 @@ class ConditionEvaluation:
     data_sufficient: bool = True
     upper_band_status: str | None = None
     indicators: dict[str, float] = field(default_factory=dict)
+    role: str = "premise"
 
 
 @dataclass
@@ -32,6 +33,9 @@ class RuleEvaluationResult:
     is_met: bool
     logic_operator: str
     condition_results: list[ConditionEvaluation]
+    premise_met: bool
+    entry_triggered: bool | None
+    exit_triggered: bool | None
     status: str = "not_met"
     data_date: date | None = None
 
@@ -52,12 +56,15 @@ class RuleEvaluationService:
         condition_results: list[ConditionEvaluation] = []
         has_error = False
         for rule_condition in sorted(rule.conditions, key=lambda c: c.sort_order):
+            role = getattr(rule_condition, "role", None) or "premise"
             try:
                 condition_cls = get_condition(rule_condition.condition_id)
             except KeyError:
                 has_error = True
                 condition_results.append(
-                    ConditionEvaluation(rule_condition.condition_id, False, "找不到這個條件的實作")
+                    ConditionEvaluation(
+                        rule_condition.condition_id, False, "找不到這個條件的實作", role=role
+                    )
                 )
                 continue
 
@@ -70,25 +77,37 @@ class RuleEvaluationService:
                     result.data_sufficient,
                     result.upper_band_status,
                     result.indicators,
+                    role=role,
                 )
             )
 
+        premises = [c for c in condition_results if c.role == "premise"]
+        entries = [c for c in condition_results if c.role == "entry"]
+        exits = [c for c in condition_results if c.role == "exit"]
         if rule.logic_operator == "OR":
-            is_met = any(c.is_met for c in condition_results)
+            premise_met = any(c.is_met for c in premises)
         else:
-            is_met = bool(condition_results) and all(c.is_met for c in condition_results)
+            premise_met = bool(premises) and all(c.is_met for c in premises)
 
-        status = "matched" if is_met else "not_met"
-        if not is_met and any(not c.data_sufficient for c in condition_results):
+        status = "matched" if premise_met else "not_met"
+        if not premise_met and any(not c.data_sufficient for c in premises):
             status = "insufficient_data"
+        if not premises:
+            has_error = True
+            condition_results.append(
+                ConditionEvaluation("evaluation", False, "戰法缺少前提條件")
+            )
         if has_error:
             status = "error"
-            is_met = False
+            premise_met = False
 
         return RuleEvaluationResult(
             rule_id=rule.id,
             ticker=ticker,
-            is_met=is_met,
+            is_met=premise_met,
+            premise_met=premise_met,
+            entry_triggered=all(c.is_met for c in entries) if entries else None,
+            exit_triggered=any(c.is_met for c in exits) if exits else None,
             logic_operator=rule.logic_operator,
             condition_results=condition_results,
             status=status,

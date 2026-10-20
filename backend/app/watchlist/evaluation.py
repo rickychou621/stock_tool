@@ -98,12 +98,16 @@ class WatchlistEvaluationService:
                     rule_id=rule.id,
                     ticker=item.ticker,
                     is_met=False,
+                    premise_met=False,
+                    entry_triggered=None,
+                    exit_triggered=None,
                     logic_operator=rule.logic_operator,
                     status="error",
                     data_date=None,
                     condition_results=[
                         dict(
                             condition_id="evaluation",
+                            role="premise",
                             is_met=False,
                             reason=failure,
                             data_sufficient=False,

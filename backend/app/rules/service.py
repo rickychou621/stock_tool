@@ -21,7 +21,9 @@ class RuleService:
     def create_rule(self, payload: WatchRuleCreateSchema) -> WatchRule:
         rule = WatchRule(name=payload.name, logic_operator=payload.logic_operator, is_enabled=True)
         rule.conditions = [
-            WatchRuleCondition(condition_id=c.condition_id, params=c.params, sort_order=i)
+            WatchRuleCondition(
+                condition_id=c.condition_id, params=c.params, sort_order=i, role=c.role
+            )
             for i, c in enumerate(payload.conditions)
         ]
         return self._repository.create(rule)

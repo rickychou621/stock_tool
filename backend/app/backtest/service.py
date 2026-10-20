@@ -45,7 +45,10 @@ def rule_snapshot(rule):
         logic_operator=rule.logic_operator,
         conditions=[
             dict(
-                condition_id=c.condition_id, params=copy.deepcopy(c.params), sort_order=c.sort_order
+                condition_id=c.condition_id,
+                params=copy.deepcopy(c.params),
+                sort_order=c.sort_order,
+                role=getattr(c, "role", None) or "premise",
             )
             for c in rule.conditions
         ],
@@ -54,7 +57,12 @@ def rule_snapshot(rule):
 
 def restore_rule(snapshot):
     return SimpleNamespace(
-        **{**snapshot, "conditions": [SimpleNamespace(**c) for c in snapshot["conditions"]]}
+        **{
+            **snapshot,
+            "conditions": [
+                SimpleNamespace(**{"role": "premise", **c}) for c in snapshot["conditions"]
+            ],
+        }
     )
 
 

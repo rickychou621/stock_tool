@@ -25,7 +25,7 @@ def _to_schema(rule: WatchRule) -> WatchRuleSchema:
         logic_operator=rule.logic_operator,
         is_enabled=rule.is_enabled,
         conditions=[
-            WatchRuleConditionSchema(condition_id=c.condition_id, params=c.params)
+            WatchRuleConditionSchema(condition_id=c.condition_id, params=c.params, role=c.role)
             for c in sorted(rule.conditions, key=lambda c: c.sort_order)
         ],
     )
@@ -86,12 +86,16 @@ def evaluate_rule(
         rule_id=result.rule_id,
         ticker=result.ticker,
         is_met=result.is_met,
+        premise_met=result.premise_met,
+        entry_triggered=result.entry_triggered,
+        exit_triggered=result.exit_triggered,
         logic_operator=result.logic_operator,
         status=result.status,
         data_date=result.data_date,
         condition_results=[
             ConditionEvaluationSchema(
                 condition_id=c.condition_id,
+                role=c.role,
                 is_met=c.is_met,
                 reason=c.reason,
                 data_sufficient=c.data_sufficient,

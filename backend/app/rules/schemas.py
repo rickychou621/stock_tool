@@ -3,12 +3,15 @@
 from datetime import date
 from typing import Literal
 
+from pydantic import model_validator
+
 from app.core.schemas import CamelModel
 
 
 class WatchRuleConditionSchema(CamelModel):
     condition_id: str
     params: dict
+    role: Literal["premise", "entry", "exit"] = "premise"
 
 
 class WatchRuleSchema(CamelModel):
@@ -24,8 +27,15 @@ class WatchRuleCreateSchema(CamelModel):
     logic_operator: str
     conditions: list[WatchRuleConditionSchema]
 
+    @model_validator(mode="after")
+    def require_premise(self):
+        if not any(c.role == "premise" for c in self.conditions):
+            raise ValueError("戰法缺少前提條件")
+        return self
+
 
 class ConditionEvaluationSchema(CamelModel):
+    role: Literal["premise", "entry", "exit"] = "premise"
     condition_id: str
     is_met: bool
     reason: str
@@ -34,6 +44,9 @@ class ConditionEvaluationSchema(CamelModel):
 
 
 class RuleEvaluationSchema(CamelModel):
+    premise_met: bool
+    entry_triggered: bool | None
+    exit_triggered: bool | None
     rule_id: int
     ticker: str
     is_met: bool

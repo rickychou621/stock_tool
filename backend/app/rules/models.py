@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.core.db import Base
 
@@ -34,6 +34,13 @@ class WatchRuleCondition(Base):
     rule_id: Mapped[int] = mapped_column(ForeignKey("watch_rules.id"))
     condition_id: Mapped[str] = mapped_column(ForeignKey("condition_catalog.id"))
     params: Mapped[dict] = mapped_column(JSON, default=dict)
+    role: Mapped[str] = mapped_column(String(10), default="premise", server_default="premise")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
     rule: Mapped["WatchRule"] = relationship(back_populates="conditions")
+
+    @validates("role")
+    def validate_role(self, key: str, value: str) -> str:
+        if value not in {"premise", "entry", "exit"}:
+            raise ValueError("無效的條件角色")
+        return value

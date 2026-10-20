@@ -266,3 +266,9 @@ stock_price_event_sync 單列同步紀錄：
 | complete | BOOLEAN，預設 false；三來源及事件寫入皆成功才設 true |
 
 固定查詢 2011-01-01 至當天，因此不保存或比較呼叫者的 start/end。當天 complete=true 跳過全部來源，價格事件的 FinMind 每天最多 1 次；失敗保留 false，下次呼叫允許重試，不屬嚴格每日上限。MySQL advisory lock 序列化跨任務同步；失敗狀態先提交，事件與成功標記則在同一交易提交。只匯入 stocks 中已存在的 ticker，同步前確保基準 0050 主檔存在。
+
+## 條件角色 Migration 014
+
+[014_rule_condition_roles.sql](../mysql/init/014_rule_condition_roles.sql) 先檢查 information_schema，再新增 watch_rule_conditions.role VARCHAR(10) NOT NULL DEFAULT 'premise'，可重複執行。既有條件皆視為 premise，部署新版後端前須先套用 migration。
+
+角色由 API 與 ORM 驗證，只接受 premise（前提）、entry（進場）、exit（出場）。前提依戰法 AND／OR 合成 premise_met 與 is_met；進場條件固定 AND、出場條件固定 OR，沒有該類條件時回傳 null。status 依前提判斷，任何角色缺少實作或戰法缺少前提都回報 error。此階段只提供新欄位，回測、全市場掃描與觀察清單尚未採用進出場觸發欄位。
