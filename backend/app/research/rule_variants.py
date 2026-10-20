@@ -43,10 +43,22 @@ class Variant:
     exit_days: int = 1
     min_slope: float | None = None
     min_turn: float | None = None
+    entry: str = "event"
+    pullback_pct: float = 0.01
+    breakout_lookback: int = 20
+    breakout_turnover_mult: float = 2.0
 
     def __post_init__(self):
         if self.exit_days < 1:
             raise ValueError("exit_days 必須至少為 1")
+        if self.entry not in ("event", "pullback", "breakout"):
+            raise ValueError("entry 必須為 event、pullback 或 breakout")
+        for field in ("pullback_pct", "breakout_lookback", "breakout_turnover_mult"):
+            value = getattr(self, field)
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{field} 必須為正數")
+        if not isinstance(self.breakout_lookback, int):
+            raise ValueError("breakout_lookback 必須為整數")
 
 
 VARIANTS = (
@@ -57,6 +69,10 @@ VARIANTS = (
     Variant("1+2+3 合併", exit_days=2, min_slope=0.01, min_turn=1e8),
     Variant("出場緩衝 3 天", exit_days=3),
     Variant("斜率 ≥ 0.5%", min_slope=0.005),
+    Variant("拉回進場", entry="pullback"),
+    Variant("拉回進場＋出場緩衝 2 天", entry="pullback", exit_days=2),
+    Variant("放量突破", entry="breakout"),
+    Variant("放量突破＋出場緩衝 2 天", entry="breakout", exit_days=2),
 )
 LIQUIDITY_GROUPS = ("≥ 1 億", "1,000 萬～1 億", "< 1,000 萬", "無資料")
 
@@ -190,8 +206,40 @@ def indicator(signal, key):
     return None
 
 
-def trades_for(ticker, signals, prices, turnover, kind, variant, costs, benchmark, dates):
+def entry_features(prices, turnover, lookback):
+    """Point-in-time windows over usable bars, including pre-signal warmup history."""
+    ordered = sorted(prices)
+    features = {}
+    for i, day in enumerate(ordered):
+        ma20 = (
+            sum(prices[d].close for d in ordered[i - 19:i + 1]) / 20 if i >= 19 else None
+        )
+        high, average_turnover = None, None
+        if i >= lookback:
+            previous = ordered[i - lookback:i]
+            high = max(prices[d].high for d in previous)
+            values = [turnover.get(d) for d in previous]
+            if all(value is not None for value in values):
+                average_turnover = sum(values) / lookback
+        features[day] = (ma20, high, average_turnover)
+    return features
+
+
+def trades_for(
+    ticker, signals, prices, turnover, kind, variant, costs, benchmark, dates,
+    feature_cache=None,
+):
     """Reference state machine: pending fills precede today's close decision."""
+    features = {}
+    if variant.entry != "event":
+        # Cache lifetime is one process_stock call, isolated from other stocks/threads.
+        if feature_cache is None:
+            feature_cache = {}
+        if variant.breakout_lookback not in feature_cache:
+            feature_cache[variant.breakout_lookback] = entry_features(
+                prices, turnover, variant.breakout_lookback
+            )
+        features = feature_cache[variant.breakout_lookback]
     indices = {d.isoformat(): i for i, d in enumerate(dates)}
     trades, position, pending, prior, below = [], None, None, False, 0
     signal_day = None
@@ -229,7 +277,28 @@ def trades_for(ticker, signals, prices, turnover, kind, variant, costs, benchmar
             below = 0 if met else below + 1
             if below >= variant.exit_days:
                 pending, below = "sell", 0
-        elif met and not prior:
+        elif pending is None and met:
+            if variant.entry == "event":
+                triggered = not prior
+            else:
+                ma20, high, average_turnover = features[day]
+                bar = prices[day]
+                if variant.entry == "pullback":
+                    triggered = (
+                        ma20 is not None
+                        and bar.low <= ma20 * (1 + variant.pullback_pct)
+                        and bar.close >= ma20
+                    )
+                else:
+                    turn = turnover.get(day)
+                    triggered = (
+                        high is not None and average_turnover is not None and turn is not None
+                        and turn >= variant.breakout_turnover_mult * average_turnover
+                        and bar.close > high
+                    )
+            if not triggered:
+                prior = met
+                continue
             ok = True
             if variant.min_slope is not None:
                 mid, slope = indicator(signal, "mid"), indicator(signal, "slope")
@@ -355,6 +424,9 @@ def markdown(result):
         f"期間：{params['start']}～{params['end']}；戰法 {params['rule_id']}。",
         "",
         "成交金額依訊號日分組；持有天數依交易日曆計算。期末未平倉不計。",
+        "拉回進場＝戰法二成立且當日最低價在月線上方 1% 內、收盤不破月線；"
+        "放量突破＝戰法二成立且成交金額 ≥ 前 20 日均的 2 倍、"
+        "收盤突破前 20 日最高價。皆為隔日開盤進場。",
         "超額統計僅計算有 0050 同日開盤資料的交易，分母為超額樣本數。",
         "全市場＝同期間全部股票等權平均；同股隨機＝同一股票隨機進場、"
         "持有相同交易日數，各 20 次平均。皆已扣成本。",
@@ -451,6 +523,7 @@ def process_stock(
             for b in adjusted_bars([b for b in raw if usable(b)], events)
         }
         trades = []
+        feature_cache = {}
         for variant in VARIANTS:
             trades.extend(
                 trades_for(
@@ -463,6 +536,7 @@ def process_stock(
                     costs,
                     benchmark,
                     dates,
+                    feature_cache,
                 )
             )
         return dict(

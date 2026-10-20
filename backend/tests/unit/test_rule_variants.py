@@ -58,7 +58,7 @@ def replay(met, variant, slope=1, turnover=1e8):
     return trades_for("TEST", signals, prices, turns, "stock", variant, TradingCosts(), {}, dates)
 
 
-@pytest.mark.parametrize("variant", VARIANTS, ids=lambda v: v.name)
+@pytest.mark.parametrize("variant", VARIANTS[:7], ids=lambda v: v.name)
 def test_all_seven_variants_execute_next_open(variant):
     trades = replay([False, True, True, False, False, False, False], variant)
     assert len(trades) == 1
@@ -109,7 +109,7 @@ def test_rejected_entry_cannot_enter_on_continued_signal():
 
 
 @pytest.mark.parametrize("met", [[True], [True, True], [True, False]])
-@pytest.mark.parametrize("variant", VARIANTS, ids=lambda v: v.name)
+@pytest.mark.parametrize("variant", VARIANTS[:7], ids=lambda v: v.name)
 def test_unfilled_open_and_pending_sell_excluded(met, variant):
     assert replay(met, variant) == []
 
@@ -528,3 +528,187 @@ def test_process_stock_returns_only_usable_adjusted_opens(monkeypatch):
     assert result["opens"] == {
         str(days[0]): 50, str(days[2]): 50, str(days[3]): 55,
     }
+
+
+@pytest.mark.parametrize("entry", ["pullback", "breakout"])
+@pytest.mark.parametrize("history", [0, 18, 19, 20])
+def test_entry_warmup_and_next_open(entry, history):
+    dates, signals, prices, turns = trigger_data(entry, history)
+    trades = trigger_trades(entry, dates, signals, prices, turns)
+    assert bool(trades) == (history >= (19 if entry == "pullback" else 20))
+    if trades:
+        assert trades[0]["signal_date"] == str(dates[history])
+        assert trades[0]["entry"] == str(dates[history + 1])
+        assert trades[0]["exit"] == str(dates[history + 2])
+        assert trades[0]["signal_turnover"] == turns[str(dates[history])]
+
+
+def trigger_data(entry, history=20):
+    from app.conditions.types import ConditionBar
+
+    dates, signals, _, turns = synthetic([True] * (history + 1) + [False, False])
+    prices = {
+        str(day): ConditionBar(day, 100, 100, 100, 100, volume=100)
+        for day in dates
+    }
+    day = dates[history]
+    if entry == "pullback":
+        # Exact low == MA20 * 1.01, with a valid OHLC bar and MA20 == 100.
+        prices[str(dates[0])] = ConditionBar(dates[0], 98, 98, 98, 98, volume=100)
+        if history >= 19:
+            old = dates[history - 19]
+            prices[str(old)] = ConditionBar(old, 98, 98, 98, 98, volume=100)
+        prices[str(day)] = ConditionBar(day, 102, 102, 101, 102, volume=100)
+    else:
+        prices[str(day)] = ConditionBar(day, 101, 101, 100, 101, volume=100)
+        turns[str(day)] = 2e8
+    # Warmup prices exist even when simulation signals start later.
+    return dates, signals[history:], dict(reversed(list(prices.items()))), turns
+
+
+def trigger_trades(entry, dates, signals, prices, turns, **kwargs):
+    return trades_for(
+        "T", signals, prices, turns, "stock", Variant("trigger", entry=entry, **kwargs),
+        TradingCosts(), {}, dates,
+    )
+
+
+@pytest.mark.parametrize(
+    "low,close,met,accepted",
+    [(101, 102, True, True), (101.00001, 102, True, False),
+     (98, 99, True, False), (101, 102, False, False)],
+)
+def test_pullback_boundaries(low, close, met, accepted):
+    from app.conditions.types import ConditionBar
+
+    dates, signals, prices, turns = trigger_data("pullback")
+    day = dates[20]
+    prices[str(day)] = ConditionBar(day, close, max(102, close), low, close, volume=100)
+    signals[0]["isMet"] = met
+    assert bool(trigger_trades("pullback", dates, signals, prices, turns)) == accepted
+
+
+@pytest.mark.parametrize(
+    "turn,close,missing,met,accepted",
+    [(2e8 - 1, 101, None, True, False), (2e8, 101, None, True, True),
+     (2e8 + 1, 101, None, True, True), (2e8, 100, None, True, False),
+     (None, 101, None, True, False), (2e8, 101, 0, True, False),
+     (2e8, 101, 19, True, False), (2e8, 101, None, False, False)],
+)
+def test_breakout_boundaries(turn, close, missing, met, accepted):
+    from app.conditions.types import ConditionBar
+
+    dates, signals, prices, turns = trigger_data("breakout")
+    day = dates[20]
+    prices[str(day)] = ConditionBar(day, close, 1000, 100, close, volume=100)
+    turns[str(day)] = turn
+    if missing is not None:
+        turns[str(dates[missing])] = None
+    signals[0]["isMet"] = met
+    assert bool(trigger_trades("breakout", dates, signals, prices, turns)) == accepted
+
+
+@pytest.mark.parametrize("entry", ["pullback", "breakout"])
+@pytest.mark.parametrize("filters", [{"min_slope": 0.02}, {"min_turn": 3e8}])
+def test_trigger_preserves_optional_filters(entry, filters):
+    assert not trigger_trades(entry, *trigger_data(entry), **filters)
+
+
+@pytest.mark.parametrize("entry", ["pullback", "breakout"])
+def test_continued_trend_and_reentry_after_exit(entry):
+    from app.conditions.types import ConditionBar
+
+    dates, signals, _, turns = synthetic([True] * 22 + [False, True, True, False, False])
+    prices = {
+        str(day): ConditionBar(day, 100 + i, 100 + i, 100 + i, 100 + i, volume=100)
+        for i, day in enumerate(dates)
+    }
+    if entry == "pullback":
+        prices = {
+            str(day): ConditionBar(day, 100, 100, 100, 100, volume=100) for day in dates
+        }
+    else:
+        turns[str(dates[20])] = 2e8
+        turns[str(dates[23])] = 3e8
+    trades = trigger_trades(entry, dates, signals, prices, turns)
+    assert len(trades) == 2
+    assert trades[0]["signal_date"] == str(dates[19 if entry == "pullback" else 20])
+    assert trades[0]["exit"] == str(dates[23])
+    assert trades[1]["signal_date"] == str(dates[23])
+    assert trades[1]["entry"] == str(dates[24])
+    assert trades[1]["exit"] == str(dates[26])
+
+
+@pytest.mark.parametrize("field", ["pullback_pct", "breakout_lookback", "breakout_turnover_mult"])
+@pytest.mark.parametrize("value", [0, -1, float("nan"), float("inf")])
+def test_invalid_trigger_parameters(field, value):
+    with pytest.raises(ValueError, match=field):
+        Variant("invalid", **{field: value})
+
+
+def test_variant_order_and_entry_validation():
+    with pytest.raises(ValueError, match="entry"):
+        Variant("invalid", entry="unknown")
+    with pytest.raises(ValueError, match="整數"):
+        Variant("invalid", breakout_lookback=1.5)
+    assert [(v.name, v.entry, v.exit_days) for v in VARIANTS[7:]] == [
+        ("拉回進場", "pullback", 1), ("拉回進場＋出場緩衝 2 天", "pullback", 2),
+        ("放量突破", "breakout", 1), ("放量突破＋出場緩衝 2 天", "breakout", 2),
+    ]
+
+
+def test_process_stock_shares_features_across_variants(monkeypatch):
+    from contextlib import nullcontext
+    from unittest.mock import Mock
+
+    from app.research import rule_variants as module
+
+    dates, signals, prices, turns = trigger_data("breakout")
+    monkeypatch.setattr(module, "load_data", lambda *args: (list(prices.values()), [], turns))
+    monkeypatch.setattr(module, "adjusted_bars", lambda bars, events: bars)
+    monkeypatch.setattr(module, "simulate", lambda *args: dict(
+        signals=signals, actualStart=str(dates[0]), actualEnd=str(dates[-1]),
+    ))
+    spy = Mock(wraps=module.entry_features)
+    monkeypatch.setattr(module, "entry_features", spy)
+    result = process_stock(
+        nullcontext, "T", rule(), dates[0], dates[-1], dates[0], dates,
+        "stock", TradingCosts(), {},
+    )
+    assert result["reason"] is None
+    assert spy.call_count == 1
+
+
+@pytest.mark.parametrize("entry", ["pullback", "breakout"])
+def test_trigger_exit_buffer_and_no_future_leakage(entry):
+    from app.conditions.types import ConditionBar
+
+    dates, signals, prices, turns = trigger_data(entry)
+    extra = dates[-1] + timedelta(days=1)
+    dates.append(extra)
+    signals.append(dict(date=str(extra), isMet=False, conditions=[]))
+    prices[str(extra)] = ConditionBar(extra, 110, 1e9, 1, 1e8, volume=100)
+    turns[str(extra)] = 1e15
+    trades = trigger_trades(entry, dates, signals, prices, turns, exit_days=2)
+    assert len(trades) == 1
+    assert trades[0]["signal_date"] == signals[0]["date"]
+    assert trades[0]["exit"] == str(extra)
+
+
+def test_configurable_breakout_window_and_threshold():
+    dates, signals, prices, turns = trigger_data("breakout", history=5)
+    turns[signals[0]["date"]] = 1.5e8
+    assert len(trigger_trades(
+        "breakout", dates, signals, prices, turns,
+        breakout_lookback=5, breakout_turnover_mult=1.5,
+    )) == 1
+    assert not trigger_trades("breakout", dates, signals, prices, turns)
+
+
+def test_breakout_counts_usable_bars_not_calendar_days():
+    dates, signals, prices, turns = trigger_data("breakout", history=21)
+    del prices[str(dates[10])]
+    turns[str(dates[10])] = None
+    assert len(trigger_trades("breakout", dates, signals, prices, turns)) == 1
+    del prices[str(dates[11])]
+    assert not trigger_trades("breakout", dates, signals, prices, turns)
