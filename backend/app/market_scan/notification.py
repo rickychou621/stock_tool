@@ -49,6 +49,8 @@ def messages(task, candidates, errors, continuing):
         .strftime("%H:%M")
     )
     timing = f"基準日 {baseline}｜完成 {finished}（台北）"
+    suspended = len({e.ticker for e in errors if e.status == "suspended" and e.ticker})
+    suspended_note = f"；停止交易 {suspended} 檔" if suspended else ""
     result = []
     if task.status in ("completed", "partial_completed"):
         label = "全市場掃描完成"
@@ -56,7 +58,7 @@ def messages(task, candidates, errors, continuing):
             label += "（部分失敗，明細見下一則）"
         lines = [
             f"{label}｜{timing}",
-            f"進場事件 {len(candidates)} 筆（延續中 {continuing} 筆未列入）",
+            f"進場事件 {len(candidates)} 筆（延續中 {continuing} 筆未列入{suspended_note}）",
         ]
         if not candidates:
             lines.append("今日沒有進場事件")

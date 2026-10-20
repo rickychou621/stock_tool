@@ -16,6 +16,7 @@ const labels: Record<string, string> = {
   interrupted: '已中斷',
   normal: '正常',
   stale: '過期',
+  suspended: '停止交易',
   insufficient_history: '歷史不足',
 }
 const when = (s: string | null) =>
@@ -410,6 +411,7 @@ export function MarketScanPage() {
               {[
                 ['normal', '正常'],
                 ['stale', '過期'],
+                ['suspended', '停止交易'],
                 ['insufficient_history', '歷史不足'],
                 ['all', '全部'],
               ].map(([v, l]) => (

@@ -11,12 +11,14 @@ from app.market_scan.data import prepare, required_days
 from app.market_scan.models import DividendCoverage
 from app.rules.evaluation import RuleEvaluationService
 
+SUSPENDED_AFTER = 20
+
 
 @dataclass
 class Outcome:
     ticker: str
     candidates: list = field(default_factory=list)
-    # status per selected rule: normal (including non-match), stale, insufficient_history.
+    # Per-rule status: normal (including non-match), stale, insufficient_history, suspended.
     rules: dict = field(default_factory=dict)
     errors: list = field(default_factory=list)
     continuing: int = 0
@@ -33,6 +35,10 @@ class Outcome:
     def insufficient(self):
         return any(v[0] == "insufficient_history" for v in self.rules.values())
 
+    @property
+    def suspended(self):
+        return any(v[0] == "suspended" for v in self.rules.values())
+
 
 def evaluate_stock(ticker, name, instrument_kind, rules, bars, dates):
     outcome = Outcome(ticker)
@@ -44,6 +50,16 @@ def evaluate_stock(ticker, name, instrument_kind, rules, bars, dates):
         raise ValueError("沒有有效日K，請初始化歷史行情")
     latest = valid[-1]
     lag = sum(d > latest.trade_date for d in dates)
+    if lag > SUSPENDED_AFTER:
+        reason = (
+            f"停止交易或長期無行情：落後 {lag} 個交易日"
+            f"（最後行情 {latest.trade_date}）"
+        )
+        return Outcome(
+            ticker,
+            rules={r.id: ("suspended", reason) for r in rules},
+            errors=[(None, "suspended", reason)],
+        )
     if lag > 5:
         raise ValueError(f"行情落後 {lag} 個交易日，超過 5 日")
     # Bad historical rows cannot silently alter a rule's rolling sequence.

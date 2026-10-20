@@ -187,7 +187,7 @@ def candidates(
     indicator: str | None = Query(None, max_length=120),
     indicator_min: float | None = Query(None, alias="indicatorMin", allow_inf_nan=False),
     indicator_max: float | None = Query(None, alias="indicatorMax", allow_inf_nan=False),
-    status: Literal["normal", "stale", "insufficient_history", "all"] = "normal",
+    status: Literal["normal", "stale", "insufficient_history", "suspended", "all"] = "normal",
     sort: Literal[
         "ticker",
         "stockName",

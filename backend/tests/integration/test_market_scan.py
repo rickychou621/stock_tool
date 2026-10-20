@@ -875,10 +875,14 @@ def test_notification_empty_and_no_failure_details_for_informational_errors(fact
     with factory() as db:
         add_notification_error(db, "1", "warning")
         add_notification_error(db, "2", "insufficient_history")
+        for rid in (1, 2):
+            add_notification_error(db, "1589", "suspended", rule_id=rid)
         db.commit()
     job.notify("notify")
     job.notifier.send_alert.assert_called_once()
-    assert "今日沒有進場事件" in job.notifier.send_alert.call_args.args[0]
+    text = job.notifier.send_alert.call_args.args[0]
+    assert "今日沒有進場事件" in text
+    assert "進場事件 0 筆（延續中 407 筆未列入；停止交易 1 檔）" in text
 
 
 def test_notification_pages_preserve_every_line_and_utf16_limit(factory):
@@ -970,3 +974,56 @@ def test_notification_turnover_units_and_reason_without_exception_name():
     reason = "行情落後 134 個交易日，超過 5 日"
     assert _reason(f"ValueError: {reason}") == reason
     assert _reason("2025-07-30 歷史行情無效") == "2025-07-30 歷史行情無效"
+
+
+@pytest.mark.parametrize("lag", [21, 39])
+def test_long_quote_lag_is_suspended_without_candidates(lag):
+    result = evaluate_stock("1", "股票1", "stock", [rule(), rule(2)], bars()[:-lag], DATES)
+    reason = (
+        f"停止交易或長期無行情：落後 {lag} 個交易日"
+        f"（最後行情 {DATES[-lag - 1]}）"
+    )
+    assert result.suspended
+    assert not result.succeeded and not result.failed and not result.insufficient
+    assert result.rules == {1: ("suspended", reason), 2: ("suspended", reason)}
+    assert result.errors == [(None, "suspended", reason)]
+    assert result.candidates == [] and result.continuing == 0
+
+
+@pytest.mark.parametrize(
+    "lag,all_suspended,status,failed",
+    [
+        (21, False, "completed", 0),
+        (6, False, "partial_completed", 1),
+        (20, False, "partial_completed", 1),
+        (21, True, "failed", 0),
+    ],
+)
+def test_quote_lag_task_status_and_notification(factory, lag, all_suspended, status, failed):
+    def worker(factory, item, rules, *args):
+        if item[0] == "1" and not all_suspended:
+            return success(factory, item, rules)
+        return evaluate_stock(
+            item[0], "股票" + item[0], item[1], rules, bars(item[0])[:-lag], DATES
+        )
+
+    job = manager(factory, worker)
+    job.start(now=NOW)
+    job.close()
+    with factory() as db:
+        task = db.get(ScanTask, "scan")
+        assert task.status == status and task.failed == failed
+        assert task.processed == 2 and task.insufficient == 0
+        assert task.succeeded == (0 if all_suspended else 1)
+        errors = list(db.scalars(select(ScanError)))
+        assert len(errors) == (2 if all_suspended else 1)
+        assert {e.status for e in errors} == {"suspended" if lag > 20 else "stale"}
+        assert not list(db.scalars(select(ScanCandidate).where(ScanCandidate.ticker == "2")))
+    texts = [call.args[0] for call in job.notifier.send_alert.call_args_list]
+    if status == "completed":
+        assert len(texts) == 1
+        assert "停止交易 1 檔" in texts[0] and "部分失敗" not in texts[0]
+    elif status == "partial_completed":
+        assert len(texts) == 2 and "部分失敗" in texts[0]
+    else:
+        assert len(texts) == 1 and texts[0].startswith("全市場掃描失敗")
