@@ -284,3 +284,17 @@ stock_price_event_sync 單列同步紀錄：
 | close_below_ma_days | 連續收盤跌破月線 | period=20、days=2；連續 2 根收盤各自嚴格低於該根均線 |
 
 均線使用還原收盤價的簡單移動平均，只計算截至評估日的必要區間。此 migration 只更新條件目錄，A2 不修改既有戰法或條件角色配置；戰法二的設定留待 B1。
+
+## 戰法二 Migration 016
+
+[016_rule2_roles.sql](../mysql/init/016_rule2_roles.sql) 重建 rule_id=1 的條件，可重複執行。須先套用 [014](../mysql/init/014_rule_condition_roles.sql) 與 [015](../mysql/init/015_ma_conditions.sql)。戰法名稱維持「戰法二：布林上軌區間」。
+
+| sort_order | condition_id | params | role |
+|---|---|---|---|
+| 0 | ma_rising | period=20、slope_lookback=5 | premise |
+| 1 | price_touch_ma | period=20、tolerance=0.01 | entry |
+| 2 | close_below_ma_days | period=20、days=2 | exit |
+
+月線上揚且股價回到月線時產生買進訊號。連續兩天收盤跌破月線時產生賣出訊號。回測皆於訊號後下一個有效交易日開盤成交。
+
+SQL 先刪除 rule_id=1 的舊條件，再以 INSERT ... SELECT 寫入。watch_rules 沒有 id=1 時不新增條件。其他戰法的條件保持原樣，包含戰法三的 bollinger_mid_up。
