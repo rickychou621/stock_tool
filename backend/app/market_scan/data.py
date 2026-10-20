@@ -7,7 +7,7 @@ from sqlalchemy import select
 from app.data_source.finmind_client import FinMindClient
 from app.market_data.models import StockPriceDaily
 from app.market_data.service import MarketDataService
-from app.market_data.validation import valid_ohlcv
+from app.market_data.validation import is_no_trade, valid_ohlcv
 from app.market_scan.models import ScanCoverage
 from app.rules.preparation import history_days
 
@@ -52,7 +52,7 @@ def missing_ranges(days, bars, coverage):
         confirmed_absent = bar is None and any(
             r["start"] <= iso <= r["end"] and iso not in r["dates"] for r in coverage
         )
-        missing.append(not (valid or confirmed_absent))
+        missing.append(not (valid or confirmed_absent or (bar is not None and is_no_trade(bar))))
     return group_missing(days, missing)
 
 

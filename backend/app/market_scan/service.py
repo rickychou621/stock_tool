@@ -82,7 +82,7 @@ def chosen_rules(db, ids=None):
 def terminal(outcomes):
     if not any(o.succeeded for o in outcomes):
         return "failed"
-    return "partial_completed" if any(o.failed or o.insufficient for o in outcomes) else "completed"
+    return "partial_completed" if any(o.failed for o in outcomes) else "completed"
 
 
 class MarketScanManager:

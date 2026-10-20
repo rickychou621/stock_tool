@@ -353,7 +353,9 @@ def test_atomic_publication_per_rule_stale_unselected_removal_and_counts(factory
             report["normalCount"] == 0 and report["succeeded"] == 1 and report["insufficient"] == 1
         )
         assert db.get(ScanSettings, 1).rule_ids == [1, 2]
-    assert "部分資料處理失敗" in job.notifier.send_alert.call_args.args[0]
+    assert "掃描完成" in job.notifier.send_alert.call_args.args[0]
+    with factory() as db:
+        assert db.get(ScanTask, "scan").status == "completed"
 
 
 def test_publish_rollback_and_restart_keep_previous(factory):
@@ -468,6 +470,8 @@ def test_empty_auto_rules_skipped_keeps_candidates_manual_rejected(factory):
     "mode,status,label",
     [
         ("success", "completed", "掃描完成"),
+        ("insufficient", "failed", "掃描失敗"),
+        ("mixed", "completed", "掃描完成"),
         ("partial", "partial_completed", "部分資料處理失敗"),
         ("failed", "failed", "掃描失敗"),
     ],
@@ -478,6 +482,9 @@ def test_task_statuses_notifications_failure_isolation_and_holiday_manual(
     def worker(factory, item, rules, *args):
         if mode == "failed" or (mode == "partial" and item[0] == "2"):
             raise RuntimeError("unavailable")
+        if mode == "insufficient" or (mode == "mixed" and item[0] == "2"):
+            # Insufficient history is informational unless nothing was evaluated at all.
+            return Outcome(item[0], rules={1: ("insufficient_history", "不足")})
         return success(factory, item, rules)
 
     job = manager(factory, worker)
@@ -762,3 +769,24 @@ def test_dividend_record_date_overlap_filters_actual_ex_dates(factory, monkeypat
         "1", start_date=DAY - timedelta(days=31), end_date=DAY + timedelta(days=31)
     )
     assert saved == [actual]
+
+
+@pytest.mark.parametrize("adjusted", [None, 0])
+def test_no_trade_history_is_skipped_but_invalid_history_is_stale(adjusted):
+    from app.market_data.validation import is_no_trade
+
+    rows = entry_bars()
+    zero = rows[10]
+    for key in ("open", "high", "low", "close"):
+        setattr(zero, key, 0)
+        setattr(zero, "adj_" + key, adjusted)
+    assert is_no_trade(zero) and not valid_ohlcv(zero)
+    expected = evaluate_stock("1", "股票1", "stock", [rule()], rows[:10] + rows[11:], DATES)
+    actual = evaluate_stock("1", "股票1", "stock", [rule()], rows, DATES)
+    assert actual.succeeded and not actual.failed
+    assert actual.rules == expected.rules
+    assert actual.continuing == expected.continuing
+    assert actual.candidates[0]["indicators"] == expected.candidates[0]["indicators"]
+    rows[11].high = rows[11].low - 1
+    assert not is_no_trade(rows[11])
+    assert evaluate_stock("1", "股票1", "stock", [rule()], rows, DATES).failed

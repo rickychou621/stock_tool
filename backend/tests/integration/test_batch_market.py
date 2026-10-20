@@ -11,7 +11,7 @@ from test_market_scan import DATES, DAY, bars, entry_bars, factory, rule, univer
 
 from app.data_source import twse_client
 from app.data_source.finmind_client import FinMindClient
-from app.data_source.twse_client import TwseBatchClient, parse_daily
+from app.data_source.twse_client import DividendEvent, TwseBatchClient, parse_daily, parse_events
 from app.market_data.models import Stock, StockDividendEvent, StockPriceDaily
 from app.market_data.service import MarketDataService
 from app.market_scan.batch_data import event_ranges, synchronize
@@ -258,7 +258,9 @@ def test_events_only_missing_active_stock_and_mismatch_warning(factory, monkeypa
         db.add(StockDividendEvent(ticker="1", ex_dividend_date=DAY, cash_dividend=1))
         db.commit()
     client = Mock(price_events=Mock(return_value=[]), tpex_price_events=Mock(return_value=[]))
-    client.events.return_value = [("1", DAY), ("2", DAY), ("inactive", DAY)]
+    client.events.return_value = [
+        DividendEvent(t, DAY, "權", Decimal(1)) for t in ("1", "2", "inactive")
+    ]
     client.daily.return_value = ([], {"1", "2"}, {})
     sync = Mock()
     monkeypatch.setattr(MarketDataService, "sync_daily_prices", sync)
@@ -273,9 +275,13 @@ def test_http_queries_shared_pacing_html_no_retry(respx_mock, monkeypatch):
     monkeypatch.setattr(twse_client, "shared_limiter", lambda: limiter)
     events = respx_mock.get(twse_client.BASE + "TWT49U").respond(
         200,
-        json={"stat": "OK", "fields": ["股票代號", "資料日期"], "data": [["1", "115年10月12日"]]},
+        json={
+            "stat": "OK",
+            "fields": ["股票代號", "資料日期", "權/息", "權值+息值"],
+            "data": [["1", "115年10月12日", "權", "1"]],
+        },
     )
-    assert TwseBatchClient().events(DAY, DAY) == [("1", DAY)]
+    assert TwseBatchClient().events(DAY, DAY) == [DividendEvent("1", DAY, "權", Decimal(1))]
     assert events.calls.last.request.url.params["startDate"] == "20261012"
     assert events.calls.last.request.url.params["endDate"] == "20261012"
     mi = respx_mock.get(twse_client.BASE + "MI_INDEX").respond(200, text="<html>blocked</html>")
@@ -332,7 +338,7 @@ def test_dividends_aggregate_months_one_call_per_stock(factory, monkeypatch):
 
     days = [date(2026, 8, 3), date(2026, 9, 3), DAY]
     client = Mock(price_events=Mock(return_value=[]), tpex_price_events=Mock(return_value=[]))
-    client.events.side_effect = [[("1", day)] for day in days]
+    client.events.side_effect = [[DividendEvent("1", day, "權", Decimal(1))] for day in days]
     calls = []
 
     def sync(self, ticker, **kwargs):
@@ -412,7 +418,7 @@ def test_missing_finmind_event_is_not_marked_complete(factory, monkeypatch):
     from app.market_scan.models import DividendCoverage
 
     client = Mock(price_events=Mock(return_value=[]), tpex_price_events=Mock(return_value=[]))
-    client.events.return_value = [("1", DAY)]
+    client.events.return_value = [DividendEvent("1", DAY, "權", Decimal(1))]
     monkeypatch.setattr(MarketDataService, "sync_daily_prices", Mock())
     synchronize(
         factory,
@@ -428,3 +434,138 @@ def test_missing_finmind_event_is_not_marked_complete(factory, monkeypatch):
     with factory() as db:
         assert db.get(DividendCoverage, "1") is None
         assert db.get(DividendCoverage, "2") is not None
+
+
+@pytest.mark.parametrize(
+    "kind,cash,expected",
+    [
+        ("息", 0, "1.07"),
+        ("息", None, "1.07"),
+        ("權", None, None),
+        ("權息", None, None),
+        ("息", 2, "2.00"),
+    ],
+)
+def test_twse_cash_fallback(factory, respx_mock, monkeypatch, kind, cash, expected):
+    from app.market_scan.models import DividendCoverage
+
+    monkeypatch.setattr(twse_client, "shared_limiter", lambda: Mock())
+    monkeypatch.setattr(TwseBatchClient, "price_events", lambda *a: [])
+    monkeypatch.setattr(TwseBatchClient, "tpex_price_events", lambda *a: [])
+    respx_mock.get(twse_client.BASE + "TWT49U").respond(
+        200,
+        json={
+            "stat": "OK",
+            "fields": ["權值+息值", "股票代號", "權/息", "資料日期"],
+            "data": [["1.07", "1", kind, "115年10月12日"]],
+        },
+    )
+    finmind = respx_mock.get("https://api.finmindtrade.com/api/v4/data").respond(
+        200,
+        json={
+            "status": 200,
+            "data": []
+            if cash is None
+            else [
+                {
+                    "CashExDividendTradingDate": DAY.isoformat(),
+                    "CashEarningsDistribution": cash,
+                }
+            ],
+        },
+    )
+    previous = DAY - timedelta(days=1)
+    with factory() as db:
+        service = MarketDataService(db)
+        service.import_market_day(previous, [raw(previous)])
+        service.import_market_day(DAY, [raw()])
+        db.commit()
+    warnings, errors = synchronize(
+        factory,
+        universe(None, None)[0],
+        [rule()],
+        "initialize",
+        [previous, DAY],
+        Mock(),
+        Mock(),
+        client=TwseBatchClient(),
+        mode="dividends",
+    )
+    assert finmind.call_count == 1
+    with factory() as db:
+        saved = db.scalar(select(StockDividendEvent).where(StockDividendEvent.ticker == "1"))
+        coverage = db.get(DividendCoverage, "1")
+        if expected is None:
+            assert saved is None and coverage is None
+            assert any("無對應除權息日" in reason for _, reason in errors)
+            assert any("還原資料未完整" in warning for warning in warnings)
+        else:
+            assert saved.cash_dividend == Decimal(expected)
+            assert saved.stock_dividend_ratio == saved.cash_capital_increase_ratio == 0
+            assert saved.cash_capital_increase_price == 0
+            assert coverage.start_date == previous and coverage.end_date == DAY
+            old = db.scalar(select(StockPriceDaily).where(StockPriceDaily.trade_date == previous))
+            assert old.adj_close == Decimal(11) - Decimal(expected)
+            assert not any("還原資料未完整" in warning for warning in warnings)
+            if cash:
+                assert not errors
+            else:
+                assert errors == [("1", f"{DAY} FinMind 無配息資料，改用證交所息值 1.07")]
+                # Later authoritative FinMind data overwrites the fallback through the same upsert.
+                finmind.respond(
+                    200,
+                    json={
+                        "status": 200,
+                        "data": [
+                            {
+                                "CashExDividendTradingDate": DAY.isoformat(),
+                                "CashEarningsDistribution": 2,
+                            }
+                        ],
+                    },
+                )
+                MarketDataService(db).sync_daily_prices(
+                    "1",
+                    start_date=DAY,
+                    end_date=DAY,
+                    fetch_prices=False,
+                )
+                db.refresh(saved)
+                db.refresh(old)
+                assert saved.cash_dividend == 2 and old.adj_close == 9
+
+
+def test_event_value_parses_thousands_by_field_name():
+    assert parse_events(
+        {
+            "stat": "OK",
+            "fields": ["權/息", "資料日期", "權值+息值", "股票代號"],
+            "data": [["息", "115年10月12日", "1,234.56", "1"]],
+        },
+        DAY,
+        DAY,
+    ) == [DividendEvent("1", DAY, "息", Decimal("1234.56"))]
+
+
+def test_no_trade_is_confirmed_without_refetch(factory):
+    from app.market_scan.data import missing_ranges
+    from app.market_scan.worker import process_stock
+
+    with factory() as db:
+        rows = bars(days=DATES[-3:])
+        zero = rows[1]
+        for key in ("open", "high", "low", "close"):
+            setattr(zero, key, 0)
+            setattr(zero, "adj_" + key, None)
+        db.add_all(rows)
+        db.add(BatchCoverage(trade_date=zero.trade_date, absent_tickers=["2"]))
+        db.commit()
+        assert missing_ranges(DATES[-3:], rows, []) == []
+    client = Mock(price_events=Mock(return_value=[]), tpex_price_events=Mock(return_value=[]))
+    client.events.return_value = []
+    run(factory, client, dates=[zero.trade_date])
+    client.daily.assert_not_called()
+    result = process_stock(
+        factory, universe(None, None)[0][0], [rule()], "initialize", DATES[-3:], Mock()
+    )
+    assert result.succeeded and not result.failed

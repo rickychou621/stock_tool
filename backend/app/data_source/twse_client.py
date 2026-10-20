@@ -4,6 +4,7 @@ import re
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from functools import lru_cache
+from typing import NamedTuple
 
 import httpx
 
@@ -81,13 +82,20 @@ def parse_daily(payload, day, active):
     return rows, absent, invalid
 
 
+class DividendEvent(NamedTuple):
+    ticker: str
+    day: date
+    kind: str
+    value: Decimal
+
+
 def parse_events(payload, start, end):
     if payload.get("stat") == "很抱歉，沒有符合條件的資料!":
         return []
     if payload.get("stat") != "OK":
         raise ValueError("證交所除權息事件尚未取得")
     fields = payload.get("fields", [])
-    if not {"資料日期", "股票代號"} <= set(fields):
+    if not {"資料日期", "股票代號", "權/息", "權值+息值"} <= set(fields):
         raise ValueError("證交所除權息欄位不完整")
     events = set()
     for cells in payload.get("data", []):
@@ -99,7 +107,12 @@ def parse_events(payload, start, end):
         day = date(y + 1911 if y < 1911 else y, m, d)
         if not start <= day <= end:
             raise ValueError("證交所除權息日期超出查詢範圍")
-        events.add((str(row["股票代號"]).strip(), day))
+        value = number(row["權值+息值"])
+        if not value.is_finite():
+            raise ValueError("證交所除權息值無效")
+        events.add(
+            DividendEvent(str(row["股票代號"]).strip(), day, str(row["權/息"]).strip(), value)
+        )
     return sorted(events)
 
 

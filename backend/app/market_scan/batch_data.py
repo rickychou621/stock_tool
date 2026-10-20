@@ -5,14 +5,15 @@ from collections import defaultdict
 from datetime import timedelta
 from time import monotonic
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.data_source.finmind_client import FinMindClient
 from app.data_source.twse_client import TwseBatchClient
-from app.market_data.models import StockDividendEvent, StockPriceDaily
+from app.market_data.models import Stock, StockDividendEvent, StockPriceDaily
 from app.market_data.price_event_sync import sync_market_price_events
+from app.market_data.repository import MarketDataRepository
 from app.market_data.service import MarketDataService
-from app.market_data.validation import valid_ohlcv
+from app.market_data.validation import is_no_trade, valid_ohlcv
 from app.market_scan.data import required_days
 from app.market_scan.models import BatchCoverage, DividendCoverage
 
@@ -94,7 +95,8 @@ def synchronize(
                 ).all()
             )
         missing = defaultdict(list)
-        for ticker, day in sorted(all_events):
+        event_details = {(e.ticker, e.day): e for e in all_events}
+        for ticker, day in sorted(event_details):
             if ticker in active and active[ticker] <= day and (ticker, day) not in existing:
                 missing[ticker].append(day)
         failed = set()
@@ -120,11 +122,40 @@ def synchronize(
                             )
                         )
                     )
+                    fallback, fallback_warnings = [], []
                     for day in sorted(set(ex_dates) - found):
-                        failed.add(ticker)
-                        errors.append(
-                            (ticker, f"{day} 證交所有除權息事件，但 FinMind 無對應除權息日")
+                        event = event_details[ticker, day]
+                        if event.kind == "息" and event.value > 0:
+                            fallback.append(
+                                dict(
+                                    ex_dividend_date=day,
+                                    cash_dividend=event.value,
+                                    stock_dividend_ratio=0,
+                                    cash_capital_increase_ratio=0,
+                                    cash_capital_increase_price=0,
+                                )
+                            )
+                            fallback_warnings.append(
+                                (ticker, f"{day} FinMind 無配息資料，改用證交所息值 {event.value}")
+                            )
+                        else:
+                            failed.add(ticker)
+                            errors.append(
+                                (ticker, f"{day} 證交所有除權息事件，但 FinMind 無對應除權息日")
+                            )
+                    if fallback:
+                        db.execute(select(Stock.id).where(Stock.ticker == ticker).with_for_update())
+                        service._repository = MarketDataRepository(db, commit=False)
+                        service._repository.upsert_dividend_events(ticker, fallback)
+                        service._recalculate_adjusted_prices(ticker, validate=True)
+                        db.execute(
+                            update(Stock)
+                            .where(Stock.ticker == ticker)
+                            .values(data_version=Stock.data_version + 1)
                         )
+                        verify()
+                        db.commit()
+                        errors.extend(fallback_warnings)
             except Exception as exc:
                 failed.add(ticker)
                 errors.append((ticker, f"股利補齊失敗（{type(exc).__name__}），未重試"))
@@ -165,11 +196,15 @@ def synchronize(
                     )
                 )
             )
-            valid = {b.ticker for b in bars if valid_ohlcv(b) and valid_ohlcv(b, True)}
+            confirmed = {
+                b.ticker
+                for b in bars
+                if is_no_trade(b) or (valid_ohlcv(b) and valid_ohlcv(b, True))
+            }
             coverage = db.get(BatchCoverage, day)
             absent = set(coverage.absent_tickers) if coverage else set()
             # Never let an absence marker hide an invalid existing price row.
-            missing = eligible - valid - (absent - {b.ticker for b in bars})
+            missing = eligible - confirmed - (absent - {b.ticker for b in bars})
         if not missing:
             continue
         if progress:

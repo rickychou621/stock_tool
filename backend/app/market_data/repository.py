@@ -38,13 +38,25 @@ class MarketDataRepository:
             return 0
 
         rows = [{"ticker": ticker, **event} for event in events]
-        stmt = mysql_insert(StockDividendEvent).values(rows)
-        stmt = stmt.on_duplicate_key_update(
-            cash_dividend=stmt.inserted.cash_dividend,
-            stock_dividend_ratio=stmt.inserted.stock_dividend_ratio,
-            cash_capital_increase_ratio=stmt.inserted.cash_capital_increase_ratio,
-            cash_capital_increase_price=stmt.inserted.cash_capital_increase_price,
+        updates = (
+            "cash_dividend",
+            "stock_dividend_ratio",
+            "cash_capital_increase_ratio",
+            "cash_capital_increase_price",
         )
+        if self._db.bind.dialect.name == "sqlite":
+            from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+            stmt = sqlite_insert(StockDividendEvent).values(rows)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["ticker", "ex_dividend_date"],
+                set_={key: getattr(stmt.excluded, key) for key in updates},
+            )
+        else:
+            stmt = mysql_insert(StockDividendEvent).values(rows)
+            stmt = stmt.on_duplicate_key_update(
+                **{key: getattr(stmt.inserted, key) for key in updates}
+            )
         self._db.execute(stmt)
         if self._commit:
             self._db.commit()

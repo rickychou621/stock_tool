@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.conditions.types import ConditionBar
 from app.market_data.models import Stock
-from app.market_data.validation import valid_ohlcv
+from app.market_data.validation import is_no_trade, valid_ohlcv
 from app.market_scan.data import prepare, required_days
 from app.market_scan.models import DividendCoverage
 from app.rules.evaluation import RuleEvaluationService
@@ -52,6 +52,7 @@ def evaluate_stock(ticker, name, instrument_kind, rules, bars, dates):
         for b in bars
         if b.trade_date < latest.trade_date
         and b.trade_date in valid_dates
+        and not is_no_trade(b)
         and (not valid_ohlcv(b) or not valid_ohlcv(b, True))
     ]
     engine_bars = [
@@ -142,7 +143,10 @@ def process_stock(factory, instrument, rules, kind, dates, limiter):
     with factory() as db:
         bars = prepare(db, ticker, listed_on, kind, rules, dates, limiter)
         if kind == "initialize":
-            if any(not valid_ohlcv(b) or not valid_ohlcv(b, True) for b in bars):
+            if any(
+                not is_no_trade(b) and (not valid_ohlcv(b) or not valid_ohlcv(b, True))
+                for b in bars
+            ):
                 raise ValueError("歷史行情仍有無效資料，請查看來源警告並重新補缺")
             if not any(valid_ohlcv(b) and valid_ohlcv(b, True) for b in bars):
                 raise ValueError("沒有有效日K，請先下載歷史行情")
