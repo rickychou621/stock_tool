@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     trade_tax_rate_stock: float = Field(default=0.003, ge=0, lt=1, allow_inf_nan=False)
     trade_tax_rate_etf: float = Field(default=0.001, ge=0, lt=1, allow_inf_nan=False)
 
+    market_scan_notify_min_turnover: float = Field(
+        default=10_000_000, ge=0, allow_inf_nan=False
+    )
+
     signal_tracking_horizons: str = "1,5,10,20"
 
     @field_validator("signal_tracking_horizons")

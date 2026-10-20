@@ -41,7 +41,7 @@ def _reason(text):
     return _shorten(re.sub(r"^\w+(Error|Exception): ", "", " ".join(text.splitlines())), 120)
 
 
-def messages(task, candidates, errors, continuing):
+def messages(task, candidates, errors, continuing, min_turnover=0):
     baseline = str(task.baseline) if task.baseline else "—"
     finished = (
         task.finished_at.replace(tzinfo=ZoneInfo("UTC"))
@@ -56,14 +56,28 @@ def messages(task, candidates, errors, continuing):
         label = "全市場掃描完成"
         if task.status == "partial_completed":
             label += "（部分失敗，明細見下一則）"
+        visible = [
+            c for c in candidates
+            if min_turnover == 0 or (c.turnover is not None and c.turnover >= min_turnover)
+        ]
+        unit = 100_000_000 if min_turnover >= 100_000_000 else 10_000
+        threshold = f"{min_turnover / unit:,f}".rstrip("0").rstrip(".")
+        threshold += " 億" if unit == 100_000_000 else " 萬"
+        turnover_note = (
+            f"成交金額 ≥ {threshold} {len(visible)} 筆；" if min_turnover else ""
+        )
         lines = [
             f"{label}｜{timing}",
-            f"進場事件 {len(candidates)} 筆（延續中 {continuing} 筆未列入{suspended_note}）",
+            f"進場事件 {len(candidates)} 筆（{turnover_note}"
+            f"延續中 {continuing} 筆未列入{suspended_note}）",
         ]
-        if not candidates:
-            lines.append("今日沒有進場事件")
+        if not visible:
+            lines.append(
+                f"今日沒有成交金額 ≥ {threshold}的進場事件"
+                if min_turnover else "今日沒有進場事件"
+            )
         ordered = sorted(
-            candidates,
+            visible,
             key=lambda c: (c.rule_id, c.turnover is None, -(c.turnover or 0), c.ticker),
         )
         for _, group in groupby(ordered, key=lambda c: c.rule_id):
@@ -89,6 +103,9 @@ def messages(task, candidates, errors, continuing):
                 if row.older_quote:
                     parts.append(f"較舊行情 {row.price_date:%m/%d}")
                 lines.append("｜".join(parts))
+        excluded = len(candidates) - len(visible)
+        if excluded:
+            lines.append(f"另有 {excluded} 筆成交金額未達 {threshold}，未列出（見網頁）")
         result.extend(_pages(lines))
 
     failures = {}

@@ -364,7 +364,10 @@ class MarketScanManager:
             publication = db.get(ScanPublication, 1)
             metadata = publication.metadata_json if publication else {}
             continuing = metadata.get("continuing", 0) if metadata.get("batchId") == batch_id else 0
-            texts = messages(task, candidates, errors, continuing)
+            texts = messages(
+                task, candidates, errors, continuing,
+                min_turnover=self.settings.market_scan_notify_min_turnover,
+            )
         for text in texts:
             try:
                 self.notifier.send_alert(text)

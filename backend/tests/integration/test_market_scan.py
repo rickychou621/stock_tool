@@ -830,7 +830,7 @@ def notification_fixture(factory, status="completed", count=0):
                 )
             )
         db.commit()
-    return manager(factory)
+    return manager(factory, settings=Settings(market_scan_notify_min_turnover=0))
 
 
 def add_notification_error(
@@ -1027,3 +1027,63 @@ def test_quote_lag_task_status_and_notification(factory, lag, all_suspended, sta
         assert len(texts) == 2 and "部分失敗" in texts[0]
     else:
         assert len(texts) == 1 and texts[0].startswith("全市場掃描失敗")
+
+
+@pytest.mark.parametrize("threshold,label", [(10_000_000, "1,000 萬"),
+                                             (50_000_000, "5,000 萬"),
+                                             (100_000_000, "1 億")])
+def test_notification_turnover_threshold_filters_display_only(factory, threshold, label):
+    job = notification_fixture(factory, count=4)
+    job.settings.market_scan_notify_min_turnover = threshold
+    with factory() as db:
+        rows = list(db.scalars(select(ScanCandidate).order_by(ScanCandidate.ticker)))
+        for row, turnover in zip(
+            rows, [None, threshold - 1, threshold, threshold + 1], strict=True
+        ):
+            row.turnover = turnover
+        add_notification_error(db, "halted", "suspended")
+        db.commit()
+    job.notify("notify")
+    text = job.notifier.send_alert.call_args.args[0]
+    assert (f"進場事件 4 筆（成交金額 ≥ {label} 2 筆；"
+            "延續中 407 筆未列入；停止交易 1 檔）") in text
+    assert "0000 測試股票" not in text and "0001 測試股票" not in text
+    assert "0002 測試股票" in text and "0003 測試股票" in text
+    assert text.endswith(f"另有 2 筆成交金額未達 {label}，未列出（見網頁）")
+    with factory() as db:
+        assert len(list(db.scalars(select(ScanCandidate)))) == 4
+
+
+def test_notification_turnover_all_excluded(factory):
+    job = notification_fixture(factory, count=2)
+    job.settings.market_scan_notify_min_turnover = 10_000_000
+    with factory() as db:
+        rows = list(db.scalars(select(ScanCandidate).order_by(ScanCandidate.ticker)))
+        rows[0].turnover, rows[1].turnover = None, 9_999_999
+        db.commit()
+    job.notify("notify")
+    text = job.notifier.send_alert.call_args.args[0]
+    assert "今日沒有成交金額 ≥ 1,000 萬的進場事件" in text
+    assert "另有 2 筆成交金額未達 1,000 萬，未列出（見網頁）" in text
+    assert "測試股票" not in text
+
+
+def test_notification_zero_threshold_preserves_exact_output(factory):
+    from app.market_scan.notification import messages
+
+    job = notification_fixture(factory, count=1)
+    with factory() as db:
+        candidate = db.scalar(select(ScanCandidate))
+        candidate.turnover = None
+        db.commit()
+        task = db.get(ScanTask, "scan")
+        expected = (
+            "全市場掃描完成｜基準日 2026-10-19｜完成 09:26（台北）\n"
+            "進場事件 1 筆（延續中 407 筆未列入）\n\n"
+            "【戰法二：布林上軌區間】1 筆\n"
+            "0000 測試股票😀｜收 1045｜成交 —｜突破上軌｜較舊行情 10/17"
+        )
+        assert messages(task, [candidate], [], 407) == [expected]
+        assert messages(task, [candidate], [], 407, min_turnover=0) == [expected]
+    job.notify("notify")
+    assert job.notifier.send_alert.call_args.args[0] == expected

@@ -143,7 +143,7 @@ const initialFilters: Record<string, string> = {
   minPrice: '',
   maxPrice: '',
   minVolume: '',
-  minTurnover: '',
+  minTurnover: '10000000',
   indicator: '',
   indicatorMin: '',
   indicatorMax: '',
@@ -472,6 +472,9 @@ export function MarketScanPage() {
                 onChange={(e) => filter(key, e.target.value)}
                 placeholder="不設門檻"
               />
+              {key === 'minTurnover' && (
+                <small>預設排除成交金額未達 1,000 萬的候選</small>
+              )}
             </label>
           ))}
           <label className="field">
