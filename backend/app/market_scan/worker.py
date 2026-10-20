@@ -40,6 +40,12 @@ class Outcome:
         return any(v[0] == "suspended" for v in self.rules.values())
 
 
+def triggered(result):
+    if result.entry_triggered is not None:
+        return result.premise_met and result.entry_triggered
+    return result.is_met
+
+
 def evaluate_stock(ticker, name, instrument_kind, rules, bars, dates):
     outcome = Outcome(ticker)
     valid_dates = set(dates)
@@ -102,7 +108,9 @@ def evaluate_stock(ticker, name, instrument_kind, rules, bars, dates):
                 outcome.errors.append((rule.id, "insufficient_history", reason))
                 continue
             outcome.rules[rule.id] = ("normal", None)
-            if not result.is_met:
+            if not triggered(result):
+                if result.entry_triggered is not None and result.premise_met:
+                    outcome.continuing += 1
                 continue
             previous = RuleEvaluationService.evaluate_bars(rule, ticker, engine_bars[:-1])
             if previous.status == "error":
@@ -117,17 +125,20 @@ def evaluate_stock(ticker, name, instrument_kind, rules, bars, dates):
                 outcome.rules[rule.id] = ("insufficient_history", reason)
                 outcome.errors.append((rule.id, "insufficient_history", reason))
                 continue
-            if previous.is_met:
+            if triggered(previous):
                 outcome.continuing += 1
                 continue
+            candidate_conditions = [
+                c for c in result.condition_results if c.role in ("premise", "entry")
+            ]
             indicators = {
                 f"{c.condition_id}.{k}": v
-                for c in result.condition_results
+                for c in candidate_conditions
                 for k, v in c.indicators.items()
             }
             if any(not math.isfinite(v) for v in indicators.values()):
                 raise ValueError("戰法指標含無效數字")
-            reason = "；".join(c.reason for c in result.condition_results if c.is_met)
+            reason = "；".join(c.reason for c in candidate_conditions if c.is_met)
             outcome.candidates.append(
                 dict(
                     ticker=ticker,

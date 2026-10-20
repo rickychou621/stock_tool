@@ -355,7 +355,7 @@ export function MarketScanPage() {
               {labels[summary.data.status]} · {when(summary.data.finishedAt)} · 基準日{' '}
               {summary.data.baseline}
             </p>
-            <p>延續中 {summary.data.continuing ?? 0} 筆（未列入候選）</p>
+            <p>趨勢中未觸發 {summary.data.continuing ?? 0} 筆（未列入候選）</p>
             <p>使用戰法：{summary.data.rules.map((r) => r.name).join('、')}</p>
             <div className="market-stats">
               <div>

@@ -69,7 +69,7 @@ def messages(task, candidates, errors, continuing, min_turnover=0):
         lines = [
             f"{label}｜{timing}",
             f"進場事件 {len(candidates)} 筆（{turnover_note}"
-            f"延續中 {continuing} 筆未列入{suspended_note}）",
+            f"趨勢中未觸發 {continuing} 筆{suspended_note}）",
         ]
         if not visible:
             lines.append(

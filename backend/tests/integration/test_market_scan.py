@@ -125,6 +125,99 @@ def entry_bars(ticker="1", days=DATES):
     return sample
 
 
+def entry_role_rule(exit_period=20):
+    return NS(
+        id=1,
+        name="回到月線",
+        logic_operator="AND",
+        conditions=[
+            NS(condition_id=cid, role=role, params=params, sort_order=i)
+            for i, (cid, role, params) in enumerate([
+                ("ma_rising", "premise", {"period": 20, "slope_lookback": 1}),
+                ("price_touch_ma", "entry", {"period": 20, "tolerance": 0}),
+                ("close_below_ma_days", "exit", {"period": exit_period, "days": 1}),
+            ])
+        ],
+    )
+
+
+def entry_role_bars(today_touch=True, yesterday_touch=False, rising=True):
+    sample = bars()
+    # The older peak allows a long-period exit to fire while the 20-day MA rises.
+    closes = [100] * 15 + list(range(10, 35)) if rising else list(range(50, 10, -1))
+    for bar, close in zip(sample, closes, strict=True):
+        for prefix in ("", "adj_"):
+            for key in ("open", "high", "low", "close"):
+                setattr(bar, prefix + key, close)
+    for offset, touch in ((1, today_touch), (2, yesterday_touch)):
+        if touch:
+            end = len(sample) - offset + 1
+            ma = sum(closes[end - 20:end]) / 20
+            sample[-offset].low = sample[-offset].adj_low = min(ma, closes[-offset])
+    return sample
+
+
+@pytest.mark.parametrize(
+    "today_touch,yesterday_touch,rising,exit_period,candidates,continuing",
+    [
+        (True, False, True, 20, 1, 0),
+        (True, True, True, 20, 0, 1),
+        (False, False, True, 20, 0, 1),
+        (True, False, False, 20, 0, 0),
+        (True, False, True, 35, 1, 0),
+    ],
+)
+def test_scan_entry_roles(
+    today_touch, yesterday_touch, rising, exit_period, candidates, continuing
+):
+    sample = entry_role_bars(today_touch, yesterday_touch, rising)
+    result = evaluate_stock(
+        "1", "股票1", "stock", [entry_role_rule(exit_period)], sample, DATES
+    )
+    assert result.rules == {1: ("normal", None)}
+    assert result.errors == []
+    assert len(result.candidates) == candidates
+    assert result.continuing == continuing
+    if candidates:
+        candidate = result.candidates[0]
+        assert "月線上揚" in candidate["reason"]
+        assert "回到月線" in candidate["reason"]
+        assert "跌破月線" not in candidate["reason"]
+        assert set(candidate["indicators"]) == {
+            "ma_rising.ma", "ma_rising.ma_prev", "ma_rising.slope",
+            "price_touch_ma.ma", "price_touch_ma.low", "price_touch_ma.close",
+            "price_touch_ma.distance",
+        }
+        exit_ma = sum(b.close for b in sample[-exit_period:]) / exit_period
+        assert (sample[-1].close < exit_ma) == (exit_period == 35)
+
+
+@pytest.mark.parametrize("exit_period,previous_insufficient", [(41, False), (40, True)])
+def test_scan_entry_roles_still_require_exit_history(exit_period, previous_insufficient):
+    result = evaluate_stock(
+        "1", "股票1", "stock", [entry_role_rule(exit_period)], entry_role_bars(), DATES
+    )
+    status, reason = result.rules[1]
+    assert status == "insufficient_history"
+    assert reason.startswith("前一個有效交易日資料不足") == previous_insufficient
+    assert not result.candidates
+    assert result.continuing == 0
+
+
+def test_scan_entry_roles_previous_touch_without_premise_is_new_trigger():
+    sample = entry_role_bars(today_touch=True, yesterday_touch=True)
+    # Yesterday's MA fell from an older peak; today's MA is rising again.
+    for prefix in ("", "adj_"):
+        for key in ("open", "high", "low", "close"):
+            setattr(sample[-22], prefix + key, 100)
+    result = evaluate_stock(
+        "1", "股票1", "stock", [entry_role_rule()], sample, DATES
+    )
+    assert result.rules == {1: ("normal", None)}
+    assert len(result.candidates) == 1
+    assert result.continuing == 0
+
+
 def success(factory, item, rules, *args):
     return evaluate_stock(item[0], "股票" + item[0], item[1], rules, entry_bars(item[0]), DATES)
 
@@ -788,6 +881,10 @@ def test_no_trade_history_is_skipped_but_invalid_history_is_stale(adjusted):
     assert actual.rules == expected.rules
     assert actual.continuing == expected.continuing
     assert actual.candidates[0]["indicators"] == expected.candidates[0]["indicators"]
+    # Odd-lot or block-trade volume on a zero-price day is still a no-trade day.
+    zero.volume = 405
+    assert is_no_trade(zero)
+    assert evaluate_stock("1", "股票1", "stock", [rule()], rows, DATES).rules == expected.rules
     rows[11].high = rows[11].low - 1
     assert not is_no_trade(rows[11])
     assert evaluate_stock("1", "股票1", "stock", [rule()], rows, DATES).failed
@@ -861,7 +958,7 @@ def test_notification_group_sort_formats_marks_and_current_normal_only(factory):
     job.notifier.send_alert.assert_called_once()
     text = job.notifier.send_alert.call_args.args[0]
     assert text.startswith("全市場掃描完成｜基準日 2026-10-19｜完成 09:26（台北）")
-    assert "進場事件 3 筆（延續中 407 筆未列入）" in text
+    assert "進場事件 3 筆（趨勢中未觸發 407 筆）" in text
     assert text.index("【戰法一】1 筆") < text.index("【戰法二：布林上軌區間】2 筆")
     assert text.index("0001 測試股票") < text.index("0000 測試股票")
     assert "收 1045｜成交 312.5 億｜突破上軌｜較舊行情 10/17" in text
@@ -882,7 +979,7 @@ def test_notification_empty_and_no_failure_details_for_informational_errors(fact
     job.notifier.send_alert.assert_called_once()
     text = job.notifier.send_alert.call_args.args[0]
     assert "今日沒有進場事件" in text
-    assert "進場事件 0 筆（延續中 407 筆未列入；停止交易 1 檔）" in text
+    assert "進場事件 0 筆（趨勢中未觸發 407 筆；停止交易 1 檔）" in text
 
 
 def test_notification_pages_preserve_every_line_and_utf16_limit(factory):
@@ -1046,7 +1143,7 @@ def test_notification_turnover_threshold_filters_display_only(factory, threshold
     job.notify("notify")
     text = job.notifier.send_alert.call_args.args[0]
     assert (f"進場事件 4 筆（成交金額 ≥ {label} 2 筆；"
-            "延續中 407 筆未列入；停止交易 1 檔）") in text
+            "趨勢中未觸發 407 筆；停止交易 1 檔）") in text
     assert "0000 測試股票" not in text and "0001 測試股票" not in text
     assert "0002 測試股票" in text and "0003 測試股票" in text
     assert text.endswith(f"另有 2 筆成交金額未達 {label}，未列出（見網頁）")
@@ -1079,7 +1176,7 @@ def test_notification_zero_threshold_preserves_exact_output(factory):
         task = db.get(ScanTask, "scan")
         expected = (
             "全市場掃描完成｜基準日 2026-10-19｜完成 09:26（台北）\n"
-            "進場事件 1 筆（延續中 407 筆未列入）\n\n"
+            "進場事件 1 筆（趨勢中未觸發 407 筆）\n\n"
             "【戰法二：布林上軌區間】1 筆\n"
             "0000 測試股票😀｜收 1045｜成交 —｜突破上軌｜較舊行情 10/17"
         )
