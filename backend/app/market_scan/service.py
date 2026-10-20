@@ -18,7 +18,8 @@ from app.data_source.notifier import TelegramNotifier
 from app.market_scan.batch_data import synchronize
 from app.market_scan.coordination import acquire
 from app.market_scan.data import required_days
-from app.market_scan.models import ScanError, ScanSettings, ScanTask
+from app.market_scan.models import ScanCandidate, ScanError, ScanPublication, ScanSettings, ScanTask
+from app.market_scan.notification import messages
 from app.market_scan.publication import publish
 from app.market_scan.rate_limit import RateLimiter
 from app.market_scan.signal_tracking import backfill
@@ -344,30 +345,39 @@ class MarketScanManager:
             task = db.get(ScanTask, "scan")
             if task.batch_id != batch_id:
                 return
-            label = {
-                "completed": "全市場掃描完成",
-                "partial_completed": "掃描完成，部分資料處理失敗",
-                "failed": "全市場掃描失敗",
-            }.get(task.status)
-            if not label:
+            if task.status not in ("completed", "partial_completed", "failed"):
                 return
-            finished = (
-                task.finished_at.replace(tzinfo=ZoneInfo("UTC"))
-                .astimezone(TZ)
-                .strftime("%Y-%m-%d %H:%M:%S")
+            candidates = list(
+                db.scalars(
+                    select(ScanCandidate).where(
+                        ScanCandidate.batch_id == batch_id, ScanCandidate.status == "normal"
+                    )
+                )
             )
-        try:
-            self.notifier.send_alert(f"{label}\n完成時間：{finished}（台北）")
-        except Exception as exc:
-            # Do not log httpx URLs: Telegram token is part of the request URL.
-            with self.factory() as db:
-                task = db.get(ScanTask, "scan")
-                if task.batch_id == batch_id:
-                    task.warnings = [
-                        *task.warnings,
-                        f"Telegram 完成通知失敗或未設定（{type(exc).__name__}）",
-                    ]
-                    db.commit()
+            errors = list(
+                db.scalars(
+                    select(ScanError)
+                    .where(ScanError.kind == "scan", ScanError.batch_id == batch_id)
+                    .order_by(ScanError.id)
+                )
+            )
+            publication = db.get(ScanPublication, 1)
+            metadata = publication.metadata_json if publication else {}
+            continuing = metadata.get("continuing", 0) if metadata.get("batchId") == batch_id else 0
+            texts = messages(task, candidates, errors, continuing)
+        for text in texts:
+            try:
+                self.notifier.send_alert(text)
+            except Exception as exc:
+                # Do not log httpx URLs: Telegram token is part of the request URL.
+                with self.factory() as db:
+                    task = db.get(ScanTask, "scan")
+                    if task.batch_id == batch_id:
+                        task.warnings = [
+                            *task.warnings,
+                            f"Telegram 完成通知失敗或未設定（{type(exc).__name__}）",
+                        ]
+                        db.commit()
 
     def record_schedule_failure(self, day, reason):
         lease = acquire(self.factory)

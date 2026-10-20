@@ -26,6 +26,7 @@ from app.market_scan.models import (
     MarketInstrument,
     ScanCandidate,
     ScanCoverage,
+    ScanError,
     ScanPublication,
     ScanSettings,
     ScanTask,
@@ -472,7 +473,7 @@ def test_empty_auto_rules_skipped_keeps_candidates_manual_rejected(factory):
         ("success", "completed", "掃描完成"),
         ("insufficient", "failed", "掃描失敗"),
         ("mixed", "completed", "掃描完成"),
-        ("partial", "partial_completed", "部分資料處理失敗"),
+        ("partial", "partial_completed", "部分失敗，明細見下一則"),
         ("failed", "failed", "掃描失敗"),
     ],
 )
@@ -496,7 +497,7 @@ def test_task_statuses_notifications_failure_isolation_and_holiday_manual(
         assert task.status == status and task.processed == 2
         assert any("Telegram" in w for w in task.warnings)
         assert not any("secret" in w for w in task.warnings)
-    assert label in job.notifier.send_alert.call_args.args[0]
+    assert any(label in call.args[0] for call in job.notifier.send_alert.call_args_list)
 
 
 def test_api_pagination_filters_actual_turnover_metrics_and_bounds(factory, monkeypatch):
@@ -790,3 +791,182 @@ def test_no_trade_history_is_skipped_but_invalid_history_is_stale(adjusted):
     rows[11].high = rows[11].low - 1
     assert not is_no_trade(rows[11])
     assert evaluate_stock("1", "股票1", "stock", [rule()], rows, DATES).failed
+
+
+def notification_fixture(factory, status="completed", count=0):
+    with factory() as db:
+        db.add(
+            ScanTask(
+                kind="scan",
+                batch_id="notify",
+                source="manual",
+                status=status,
+                started_at=datetime(2026, 10, 20),
+                finished_at=datetime(2026, 10, 20, 1, 26),
+                baseline=date(2026, 10, 19),
+                rules=[],
+                warnings=[],
+            )
+        )
+        db.add(ScanPublication(id=1, metadata_json={"batchId": "notify", "continuing": 407}))
+        for i in range(count):
+            db.add(
+                ScanCandidate(
+                    ticker=f"{i:04}",
+                    stock_name="測試股票😀",
+                    kind="stock",
+                    rule_id=2,
+                    rule_name="戰法二：布林上軌區間",
+                    batch_id="notify",
+                    status="normal",
+                    reason="突破布林上軌",
+                    indicators={},
+                    close=1045,
+                    turnover=31_250_000_000 - i,
+                    price_date=date(2026, 10, 17),
+                    volume=1,
+                    scanned_at=datetime(2026, 10, 20),
+                    older_quote=True,
+                )
+            )
+        db.commit()
+    return manager(factory)
+
+
+def add_notification_error(
+    db, ticker, status="failed", reason="行情落後 134 個交易日，超過 5 日", **kwargs
+):
+    db.add(
+        ScanError(
+            kind="scan", batch_id="notify", ticker=ticker, status=status, reason=reason, **kwargs
+        )
+    )
+
+
+def test_notification_group_sort_formats_marks_and_current_normal_only(factory):
+    job = notification_fixture(factory, count=6)
+    with factory() as db:
+        rows = list(db.scalars(select(ScanCandidate).order_by(ScanCandidate.ticker)))
+        rows[0].turnover = None
+        rows[1].turnover = 9_820_000_000
+        rows[1].close = 1380.50
+        rows[1].reason = ""
+        rows[1].indicators = {"訊號": "觸及布林上軌"}
+        rows[2].rule_id, rows[2].rule_name = 1, "戰法一"
+        rows[3].batch_id = "old"
+        rows[4].status = "stale"
+        rows[5].status = "insufficient_history"
+        db.commit()
+    job.notify("notify")
+    job.notifier.send_alert.assert_called_once()
+    text = job.notifier.send_alert.call_args.args[0]
+    assert text.startswith("全市場掃描完成｜基準日 2026-10-19｜完成 09:26（台北）")
+    assert "進場事件 3 筆（延續中 407 筆未列入）" in text
+    assert text.index("【戰法一】1 筆") < text.index("【戰法二：布林上軌區間】2 筆")
+    assert text.index("0001 測試股票") < text.index("0000 測試股票")
+    assert "收 1045｜成交 312.5 億｜突破上軌｜較舊行情 10/17" in text
+    assert "收 1380.5｜成交 98.2 億｜觸及上軌" in text
+    assert "成交 —" in text
+    assert all(ticker not in text for ticker in ("0003", "0004", "0005"))
+
+
+def test_notification_empty_and_no_failure_details_for_informational_errors(factory):
+    job = notification_fixture(factory)
+    with factory() as db:
+        add_notification_error(db, "1", "warning")
+        add_notification_error(db, "2", "insufficient_history")
+        db.commit()
+    job.notify("notify")
+    job.notifier.send_alert.assert_called_once()
+    assert "今日沒有進場事件" in job.notifier.send_alert.call_args.args[0]
+
+
+def test_notification_pages_preserve_every_line_and_utf16_limit(factory):
+    from app.alerts.notification import MESSAGE_LIMIT, _text_size
+
+    job = notification_fixture(factory, count=180)
+    job.notify("notify")
+    texts = [call.args[0] for call in job.notifier.send_alert.call_args_list]
+    assert len(texts) >= 3
+    for i, text in enumerate(texts, 1):
+        assert _text_size(text) <= MESSAGE_LIMIT
+        if i > 1:
+            assert text.startswith(f"全市場掃描結果（續 {i}/{len(texts)}）\n")
+    entries = [line for text in texts for line in text.splitlines() if "測試股票" in line]
+    assert len(entries) == 180
+    for i, line in enumerate(entries):
+        assert line == f"{i:04} 測試股票😀｜收 1045｜成交 312.5 億｜突破上軌｜較舊行情 10/17"
+
+
+@pytest.mark.parametrize(
+    "status,expected", [("partial_completed", 2), ("failed", 1), ("completed", 2)]
+)
+def test_notification_failure_deduplication_truncation_and_status(factory, status, expected):
+    from app.alerts.notification import _shorten
+
+    job = notification_fixture(factory, status, count=1)
+    with factory() as db:
+        for i in range(23):
+            add_notification_error(db, f"E{i:02}", "stale", "錯😀" * 100, rule_id=1)
+            add_notification_error(db, f"E{i:02}", reason="第二戰法不應出現", rule_id=2)
+        for rid in (1, 2):
+            add_notification_error(db, "short", "insufficient_history", rule_id=rid)
+        add_notification_error(db, "warn", "warning", reason="不列警告")
+        db.add(
+            ScanError(
+                kind="initialize",
+                batch_id="notify",
+                ticker="wrong",
+                status="failed",
+                reason="不列初始化",
+            )
+        )
+        db.add(
+            ScanError(
+                kind="scan", batch_id="old", ticker="old", status="failed", reason="不列舊批次"
+            )
+        )
+        db.commit()
+    job.notify("notify")
+    assert job.notifier.send_alert.call_count == expected
+    text = job.notifier.send_alert.call_args.args[0]
+    assert text.startswith("全市場掃描失敗｜" if status == "failed" else "處理失敗 23 檔｜")
+    assert f"E00 {_shorten('錯😀' * 100, 120)}" in text
+    assert "E19 " in text and "E20 " not in text
+    assert "其餘 3 檔見網頁錯誤列表" in text
+    assert "資料不足 1 檔（未逐一列出，見網頁錯誤列表）" in text
+    assert all(s not in text for s in ("第二戰法", "不列"))
+    if status == "partial_completed":
+        assert "部分失敗，明細見下一則" in job.notifier.send_alert.call_args_list[0].args[0]
+
+
+@pytest.mark.parametrize("both_fail", [False, True])
+def test_notification_send_failure_still_attempts_details_and_records_each_warning(
+    factory, both_fail
+):
+    job = notification_fixture(factory, "partial_completed")
+    with factory() as db:
+        add_notification_error(db, "1589")
+        db.commit()
+    secret = RuntimeError("https://secret-token.invalid")
+    job.notifier.send_alert.side_effect = [secret, secret if both_fail else None]
+    job.notify("notify")
+    assert job.notifier.send_alert.call_count == 2
+    assert job.notifier.send_alert.call_args.args[0].startswith("處理失敗 1 檔")
+    with factory() as db:
+        warnings = db.get(ScanTask, "scan").warnings
+        assert len(warnings) == (2 if both_fail else 1)
+        assert all("Telegram" in warning and "RuntimeError" in warning for warning in warnings)
+        assert "secret" not in str(warnings)
+
+
+def test_notification_turnover_units_and_reason_without_exception_name():
+    from app.market_scan.notification import _reason, _turnover
+
+    assert _turnover(None) == "—"
+    assert _turnover(312_500_000) == "3.1 億"
+    assert _turnover(35_120_000) == "3,512 萬"
+    assert _turnover(4_000) == "0 萬"
+    reason = "行情落後 134 個交易日，超過 5 日"
+    assert _reason(f"ValueError: {reason}") == reason
+    assert _reason("2025-07-30 歷史行情無效") == "2025-07-30 歷史行情無效"
