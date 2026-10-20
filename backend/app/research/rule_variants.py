@@ -9,6 +9,7 @@ trades (so a one-trade group has no trimmed mean).
 import argparse
 import json
 import math
+import random
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,6 +18,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from statistics import mean, median
 
+import numpy as np
 from sqlalchemy import select
 
 from app.backtest.data import next_month, taipei_today
@@ -213,6 +215,8 @@ def trades_for(ticker, signals, prices, turnover, kind, variant, costs, benchmar
                         gross=exit / entry - 1,
                         net=net,
                         excess=net - (bx / bo - 1) if bo and bx else None,
+                        excess_market=None,
+                        excess_random=None,
                         holding_days=indices[day] - indices[position],
                         signal_turnover=turnover.get(signal_day),
                         entry_year=int(position[:4]),
@@ -238,6 +242,48 @@ def trades_for(ticker, signals, prices, turnover, kind, variant, costs, benchmar
     return trades
 
 
+def add_baselines(trades, stock_opens, dates, start, costs, kinds=None, min_stocks=50):
+    """Enrich trades without changing fills; dates retain suspended sessions."""
+    days = [d.isoformat() for d in dates if d >= start]
+    columns = {day: i for i, day in enumerate(days)}
+    rows = {ticker: i for i, ticker in enumerate(sorted(stock_opens))}
+    opens = np.full((len(rows), len(days)), np.nan)
+    for ticker, row in rows.items():
+        for day, price in stock_opens[ticker].items():
+            if day in columns:
+                opens[row, columns[day]] = price
+    market_cache, random_pools = {}, {}
+    for trade in trades:
+        pair = (trade["entry"], trade["exit"])
+        if pair not in market_cache:
+            baseline = None
+            if all(day in columns for day in pair):
+                ratios = opens[:, columns[pair[1]]] / opens[:, columns[pair[0]]]
+                if np.count_nonzero(~np.isnan(ratios)) >= min_stocks:
+                    baseline = costs.net_return(1, float(np.nanmean(ratios)), "stock")
+            market_cache[pair] = baseline
+        baseline = market_cache[pair]
+        trade["excess_market"] = None if baseline is None else trade["net"] - baseline
+
+        ticker, holding = trade["ticker"], trade["holding_days"]
+        key = (ticker, holding)
+        if key not in random_pools:
+            pool = []
+            if ticker in rows and 0 < holding < len(days):
+                prices = opens[rows[ticker]]
+                ratios = prices[holding:] / prices[:-holding]
+                kind = (kinds or {}).get(ticker, "stock")
+                pool = [
+                    costs.net_return(1, float(ratio), kind)
+                    for ratio in ratios[~np.isnan(ratios)]
+                ]
+            random_pools[key] = pool
+        pool = random_pools[key]
+        rng = random.Random(f"{ticker}|{trade['variant']}|{trade['entry']}")
+        samples = rng.sample(pool, 20) if len(pool) > 20 else pool
+        trade["excess_random"] = trade["net"] - mean(samples) if samples else None
+
+
 def liquidity_group(turnover):
     if turnover is None:
         return "無資料"
@@ -247,6 +293,8 @@ def liquidity_group(turnover):
 def statistics(trades):
     values = [t["net"] for t in trades]
     excess = [t["excess"] for t in trades if t["excess"] is not None]
+    market = [t["excess_market"] for t in trades if t.get("excess_market") is not None]
+    randomized = [t["excess_random"] for t in trades if t.get("excess_random") is not None]
     losses = -sum(v for v in values if v < 0)
     trimmed = sorted(values)[: len(values) - math.ceil(len(values) * 0.01)]
     return dict(
@@ -259,6 +307,10 @@ def statistics(trades):
         average_excess=mean(excess) if excess else None,
         positive_excess_rate=mean(v > 0 for v in excess) if excess else None,
         excess_count=len(excess),
+        average_excess_market=mean(market) if market else None,
+        positive_excess_market_rate=mean(v > 0 for v in market) if market else None,
+        average_excess_random=mean(randomized) if randomized else None,
+        positive_excess_random_rate=mean(v > 0 for v in randomized) if randomized else None,
         median_holding_days=median(t["holding_days"] for t in trades) if trades else None,
         trimmed_average_net=mean(trimmed) if trimmed else None,
         trimmed_count=len(values) - len(trimmed),
@@ -304,6 +356,8 @@ def markdown(result):
         "",
         "成交金額依訊號日分組；持有天數依交易日曆計算。期末未平倉不計。",
         "超額統計僅計算有 0050 同日開盤資料的交易，分母為超額樣本數。",
+        "全市場＝同期間全部股票等權平均；同股隨機＝同一股票隨機進場、"
+        "持有相同交易日數，各 20 次平均。皆已扣成本。",
         "去頂端 1% 使用淨報酬排序，移除筆數向上取整；單筆組移除後為無資料。",
         "獲利因子無虧損時顯示無虧損；其他無法計算值顯示 —。",
     ]
@@ -315,8 +369,10 @@ def markdown(result):
             f"## {group}",
             "",
             "| 變體 | 筆數 | 淨勝率 | 平均淨報酬 | 中位淨報酬 | 獲利因子 | 平均超額 |"
-            " 超額正比例 | 超額樣本 | 持有日中位數 | 去頂端 1% 平均淨 | 股票數 |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+            " 超額正比例 | 超額樣本 | 平均超額（全市場） | 超額為正比例（全市場） |"
+            " 平均超額（同股隨機） | 超額為正比例（同股隨機） |"
+            " 持有日中位數 | 去頂端 1% 平均淨 | 股票數 |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
         for name, s in variants.items():
 
@@ -341,6 +397,10 @@ def markdown(result):
                 pct("average_excess"),
                 pct("positive_excess_rate"),
                 str(s["excess_count"]),
+                pct("average_excess_market"),
+                pct("positive_excess_market_rate"),
+                pct("average_excess_random"),
+                pct("positive_excess_random_rate"),
                 holding,
                 pct("trimmed_average_net"),
                 str(s["stock_count"]),
@@ -408,6 +468,7 @@ def process_stock(
         return dict(
             ticker=ticker,
             trades=trades,
+            opens={day: b.open for day, b in prices.items()},
             reason=None,
             elapsed_seconds=time.perf_counter() - started,
             actual_start=payload["actualStart"],
@@ -486,6 +547,14 @@ def run_research(args, factory=SessionLocal):
                     )
     results.sort(key=lambda r: r["ticker"])
     trades = [t for r in results for t in r["trades"]]
+    add_baselines(
+        trades,
+        {r["ticker"]: r["opens"] for r in results if r["reason"] is None},
+        dates,
+        start,
+        costs,
+        kinds,
+    )
     return dict(
         parameters=dict(
             universe=args.universe,
@@ -504,7 +573,7 @@ def run_research(args, factory=SessionLocal):
         skipped=[dict(ticker=r["ticker"], reason=r["reason"]) for r in results if r["reason"]],
         benchmark_reason=benchmark_reason,
         trades=trades,
-        stocks=[{k: v for k, v in r.items() if k != "trades"} for r in results],
+        stocks=[{k: v for k, v in r.items() if k not in ("trades", "opens")} for r in results],
         statistics=summarize(trades, start, args.end),
         elapsed_seconds=time.perf_counter() - started,
     )

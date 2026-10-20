@@ -1,4 +1,6 @@
+import random
 from datetime import date, timedelta
+from statistics import mean
 from types import SimpleNamespace
 
 import httpx
@@ -13,6 +15,7 @@ from app.research.rule_variants import (
     VARIANTS,
     DataUnavailable,
     Variant,
+    add_baselines,
     liquidity_group,
     load_benchmark,
     load_calendar,
@@ -329,6 +332,18 @@ def test_report_groups_and_three_placeholders():
     )
     assert report.splitlines()[:3] == ["<!-- 結論待填 -->"] * 3
     assert report.count("| 變體 |") == 8
+    for heading in (
+        "平均超額（全市場）",
+        "超額為正比例（全市場）",
+        "平均超額（同股隨機）",
+        "超額為正比例（同股隨機）",
+    ):
+        assert report.count(heading) == 8
+    assert (
+        "全市場＝同期間全部股票等權平均；同股隨機＝同一股票隨機進場、"
+        "持有相同交易日數，各 20 次平均。皆已扣成本。"
+    ) in report
+    assert all(len(line.split("|")) == 18 for line in report.splitlines() if line.startswith("|"))
 
 
 def test_corrupt_price_and_missing_adjustment_are_rejected(db):
@@ -408,3 +423,108 @@ def test_gaps_before_listing_or_confirmed_absent_are_not_gaps():
         pass
     else:
         raise AssertionError("unconfirmed gap must be skipped")
+
+
+@pytest.mark.parametrize("missing_exit", [False, True])
+def test_market_equal_weights_and_missing_endpoint(missing_exit):
+    days = [date(2026, 1, 5), date(2026, 1, 6)]
+    entry, exit = [d.isoformat() for d in days]
+    opens = {
+        "A": {entry: 10, exit: 12},
+        "B": {entry: 1000, exit: 900},
+        "C": {entry: 20, **({} if missing_exit else {exit: 30})},
+    }
+    trade = dict(ticker="A", variant="原規則", entry=entry, exit=exit, holding_days=1, net=0.2)
+    costs = TradingCosts(fee_discount=0.6)
+    add_baselines([trade], opens, days, days[0], costs, min_stocks=2)
+    ratio = mean([1.2, 0.9] if missing_exit else [1.2, 0.9, 1.5])
+    assert trade["excess_market"] == pytest.approx(0.2 - costs.net_return(1, ratio, "stock"))
+    add_baselines([trade], opens, days, days[0], costs)
+    assert trade["excess_market"] is None
+
+
+@pytest.mark.parametrize("size", [35, 8, 2])
+def test_random_reproducible_returns_short_pool_and_no_pool(size):
+    days = [date(2026, 1, 1) + timedelta(days=i) for i in range(size)]
+    start = days[1]
+    # Different price levels and a missing session catch compressed-calendar sampling.
+    opens = {
+        d.isoformat(): 10 + i * i
+        for i, d in enumerate(days)
+        if i != 4
+    }
+    holding = 2
+    trade = dict(
+        ticker="A", variant="原規則", entry=days[1].isoformat(),
+        exit=days[-1].isoformat(), holding_days=holding, net=0.1,
+    )
+    costs = TradingCosts()
+    eligible = [
+        i for i in range(1, size - holding)
+        if days[i].isoformat() in opens and days[i + holding].isoformat() in opens
+    ]
+    rng = random.Random(f"A|原規則|{trade['entry']}")
+    selected = rng.sample(eligible, 20) if len(eligible) >= 20 else eligible
+    expected = (
+        0.1 - mean(
+            costs.net_return(opens[days[i].isoformat()], opens[days[i + holding].isoformat()])
+            for i in selected
+        )
+        if selected else None
+    )
+    add_baselines([trade], {"A": opens}, days, start, costs)
+    first = trade["excess_random"]
+    random.seed(987)
+    add_baselines([trade], {"A": dict(reversed(list(opens.items())))}, days, start, costs)
+    assert trade["excess_random"] == first
+    assert first == pytest.approx(expected) if expected is not None else first is None
+
+
+def test_new_statistics_use_independent_nonmissing_denominators():
+    trades = [
+        dict(
+            ticker="A", net=0.1, excess=None, holding_days=2,
+            excess_market=market, excess_random=rand,
+        )
+        for market, rand in [(0.2, None), (-0.1, 0.3), (None, 0), (None, -0.6)]
+    ]
+    stats = statistics(trades)
+    assert stats["average_excess_market"] == pytest.approx(0.05)
+    assert stats["positive_excess_market_rate"] == 0.5
+    assert stats["average_excess_random"] == pytest.approx(-0.1)
+    assert stats["positive_excess_random_rate"] == pytest.approx(1 / 3)
+    for key in (
+        "average_excess_market", "positive_excess_market_rate",
+        "average_excess_random", "positive_excess_random_rate",
+    ):
+        assert statistics([])[key] is None
+
+
+def test_process_stock_returns_only_usable_adjusted_opens(monkeypatch):
+    from contextlib import nullcontext
+
+    from app.conditions.types import ConditionBar
+    from app.market_data.price_adjustment import PriceEvent
+    from app.research import rule_variants as module
+
+    days = [date(2026, 1, 5) + timedelta(days=i) for i in range(4)]
+    raw = [
+        ConditionBar(days[0], 100, 101, 99, 100, volume=100),
+        ConditionBar(days[1], 0, 0, 0, 0, volume=0),
+        ConditionBar(days[2], 50, 51, 49, 50, volume=100),
+        ConditionBar(days[3], 55, 56, 54, 55, volume=100),
+    ]
+    events = [PriceEvent(days[2], 100, 50)]
+    monkeypatch.setattr(module, "load_data", lambda *args: (raw, events, {}))
+    monkeypatch.setattr(
+        module, "simulate",
+        lambda *args: dict(signals=[], actualStart=str(days[0]), actualEnd=str(days[-1])),
+    )
+    result = process_stock(
+        nullcontext, "A", rule(), days[0], days[-1], days[0], days,
+        "stock", TradingCosts(), {},
+    )
+    assert result["reason"] is None
+    assert result["opens"] == {
+        str(days[0]): 50, str(days[2]): 50, str(days[3]): 55,
+    }
