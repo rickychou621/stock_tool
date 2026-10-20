@@ -5,5 +5,6 @@ from app.conditions import (  # noqa: F401
     bollinger_band,
     ema_cross,
     kd_macd,
+    moving_average,
     volume_spike,
 )

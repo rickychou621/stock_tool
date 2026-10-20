@@ -85,7 +85,7 @@
 | `update_frequency` | VARCHAR(10) | `realtime`/`daily`/`monthly` |
 | `param_schema` | JSON | 參數規格(供前端動態產生輸入表單,如 `{"short_period": "int", "long_period": "int"}`) |
 
-此表由後端啟動時依 `conditions/registry.py` 的註冊內容同步寫入,前端只讀取此表來組裝規則,不需知道條件的實際運算邏輯。
+此表由 SQL seed／增量 migration 寫入，後端 registry 負責註冊條件實作，不會在啟動時同步此表。前端讀取此表來組裝規則，不需知道條件的實際運算邏輯。
 
 ### 2.6 `watch_rules`(監控規則)
 
@@ -272,3 +272,15 @@ stock_price_event_sync 單列同步紀錄：
 [014_rule_condition_roles.sql](../mysql/init/014_rule_condition_roles.sql) 先檢查 information_schema，再新增 watch_rule_conditions.role VARCHAR(10) NOT NULL DEFAULT 'premise'，可重複執行。既有條件皆視為 premise，部署新版後端前須先套用 migration。
 
 角色由 API 與 ORM 驗證，只接受 premise（前提）、entry（進場）、exit（出場）。前提依戰法 AND／OR 合成 premise_met 與 is_met；進場條件固定 AND、出場條件固定 OR，沒有該類條件時回傳 null。status 依前提判斷，任何角色缺少實作或戰法缺少前提都回報 error。此階段只提供新欄位，回測、全市場掃描與觀察清單尚未採用進出場觸發欄位。
+
+## 月線條件 Migration 015
+
+[015_ma_conditions.sql](../mysql/init/015_ma_conditions.sql) 新增或更新 condition_catalog 的三個日 K 條件，update_frequency 皆為 daily。使用 INSERT ... ON DUPLICATE KEY UPDATE，可重複執行；既有 DB 須先套用此 migration，後續才能透過外鍵引用這些條件。
+
+| id | 名稱 | 預設參數與判斷 |
+|---|---|---|
+| ma_rising | 月線上揚 | period=20、slope_lookback=5；今日均線嚴格高於 5 個交易日前均線 |
+| price_touch_ma | 回到月線 | period=20、tolerance=0.01；最低價 ≤ 均線 × 1.01，且收盤 ≥ 均線 |
+| close_below_ma_days | 連續收盤跌破月線 | period=20、days=2；連續 2 根收盤各自嚴格低於該根均線 |
+
+均線使用還原收盤價的簡單移動平均，只計算截至評估日的必要區間。此 migration 只更新條件目錄，A2 不修改既有戰法或條件角色配置；戰法二的設定留待 B1。
