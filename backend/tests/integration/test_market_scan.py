@@ -1184,3 +1184,24 @@ def test_notification_zero_threshold_preserves_exact_output(factory):
         assert messages(task, [candidate], [], 407, min_turnover=0) == [expected]
     job.notify("notify")
     assert job.notifier.send_alert.call_args.args[0] == expected
+
+
+def test_chosen_rules_keeps_condition_roles(factory):
+    # Regression (2026-10-21): the scan snapshot dropped role, so strategy two's premise,
+    # entry and exit were ANDed together and the scan produced no strategy-two candidates.
+    from app.market_scan.service import chosen_rules
+
+    with factory() as db:
+        rule = db.get(WatchRule, 1)
+        rule.conditions = [
+            WatchRuleCondition(condition_id="ma_rising", params={}, sort_order=0, role="premise"),
+            WatchRuleCondition(
+                condition_id="price_touch_ma", params={}, sort_order=1, role="entry"
+            ),
+            WatchRuleCondition(
+                condition_id="close_below_ma_days", params={}, sort_order=2, role="exit"
+            ),
+        ]
+        db.commit()
+        snapshot = chosen_rules(db, [1])[0]
+    assert [c.role for c in snapshot.conditions] == ["premise", "entry", "exit"]

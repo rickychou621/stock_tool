@@ -72,6 +72,8 @@ def chosen_rules(db, ids=None):
                     condition_id=c.condition_id,
                     params=copy.deepcopy(c.params),
                     sort_order=c.sort_order,
+                    # Without the role every condition becomes a premise (rule 2: all three ANDed).
+                    role=c.role,
                 )
                 for c in r.conditions
             ],
