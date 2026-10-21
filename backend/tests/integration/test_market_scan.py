@@ -184,7 +184,7 @@ def test_scan_entry_roles(
         assert "回到月線" in candidate["reason"]
         assert "跌破月線" not in candidate["reason"]
         assert set(candidate["indicators"]) == {
-            "ma_rising.ma", "ma_rising.ma_prev", "ma_rising.slope",
+            "ma_rising.ma", "ma_rising.ma_prev", "ma_rising.slope", "ma_rising.slope_pct",
             "price_touch_ma.ma", "price_touch_ma.low", "price_touch_ma.close",
             "price_touch_ma.distance",
         }

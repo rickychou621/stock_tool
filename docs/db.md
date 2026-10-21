@@ -324,3 +324,11 @@ SQL 先刪除 rule_id=1 的舊條件，再以 INSERT ... SELECT 寫入。watch_r
 先檢查 information_schema，再新增 watch_rules.evaluation_frequency VARCHAR(10) NOT NULL DEFAULT 'daily'，可重複執行。只將 id=2 的戰法三設為 weekly；其餘既有戰法預設 daily，重跑不覆寫其他戰法的頻率。API 與 ORM 僅接受 daily、weekly。
 
 weekly 使用台北交易日期，只在週五判斷，採用當月截至該日的月 K；週五休市則整週跳過，週六補班不判斷。回測每日維護行情與除權息還原，判斷日收盤掛單後於下一個有效交易日開盤成交。全市場掃描與觀察清單的頻率控制留待 C3b。
+
+## 回到月線後轉強 Migration 019
+
+[019_ma_touch_rebound.sql](../mysql/init/019_ma_touch_rebound.sql) 新增或更新 condition_catalog 的 ma_touch_rebound，使用 INSERT ... ON DUPLICATE KEY UPDATE，可重複執行。只更新條件目錄，不修改任何戰法；尚未套用 DB。
+
+預設 period=20、tolerance=0.01。前一根最低價 ≤ 前一根 MA × 1.01 且收盤 ≥ 前一根 MA；今日收盤 > 前一根收盤且 ≥ 今日 MA。至少需要 period + 1 根日 K，各日使用自己的收盤簡單移動平均。
+
+研究工具另支援 close_below_ma_days.buffer，預設 0，以及 ma_rising.min_slope_pct，預設 None；預設判斷維持現行行為。參數存於 JSON，不需另做 migration。

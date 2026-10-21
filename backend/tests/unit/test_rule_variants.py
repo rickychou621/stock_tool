@@ -343,7 +343,7 @@ def test_report_groups_and_three_placeholders():
         "全市場＝同期間全部股票等權平均；同股隨機＝同一股票隨機進場、"
         "持有相同交易日數，各 20 次平均。皆已扣成本。"
     ) in report
-    assert all(len(line.split("|")) == 18 for line in report.splitlines() if line.startswith("|"))
+    assert all(len(line.split("|")) == 20 for line in report.splitlines() if line.startswith("|"))
 
 
 def test_corrupt_price_and_missing_adjustment_are_rejected(db):
@@ -846,3 +846,108 @@ def test_engine_variant_order_and_report_definition():
         ))
         assert "現行定義＝DB 中的戰法定義" in report
         assert ("其餘變體以舊戰法二" in report) == (rule_id == 1)
+
+
+def test_holding_proportions_boundaries_and_empty():
+    trades = [dict(net=0, excess=None, ticker="T", holding_days=h) for h in (1, 10, 11, 20, 21)]
+    result = statistics(trades)
+    assert result["holding_le_10_rate"] == 2 / 5
+    assert result["holding_gt_20_rate"] == 1 / 5
+    assert statistics([])["holding_le_10_rate"] is None
+    assert statistics([])["holding_gt_20_rate"] is None
+
+
+def test_condition_override_isolated_cached_and_preserves_rule_settings(monkeypatch):
+    from contextlib import nullcontext
+
+    from app.backtest.service import rule_snapshot
+    from app.research import rule_variants as module
+
+    current = rule()
+    current.logic_operator = "OR"
+    current.evaluation_frequency = "weekly"
+    before = rule_snapshot(current)
+    conditions = (("ma_rising", {"period": 2, "slope_lookback": 1}, "premise"),)
+    reordered = (("ma_rising", {"slope_lookback": 1, "period": 2}, "premise"),)
+    variants = (Variant("current", source="engine"),
+                Variant("changed", source="engine", conditions=conditions),
+                Variant("shared", source="engine", conditions=reordered))
+    calls = []
+
+    def simulate_stub(r, *args):
+        calls.append(rule_snapshot(r))
+        return dict(signals=[], actualStart="2026-01-01", actualEnd="2026-01-04", trades=[dict(
+            status="closed", entrySignalDate="2026-01-01", entryDate="2026-01-02",
+            exitDate="2026-01-04", entryPrice=100, exitPrice=100 + len(calls),
+            returnRate=len(calls) / 100, holdingDays=2)])
+
+    monkeypatch.setattr(module, "load_data", lambda *a: ([], [], {}))
+    monkeypatch.setattr(module, "simulate", simulate_stub)
+    d = date(2026, 1, 1)
+    result = process_stock(nullcontext, "T", current, d, d, d, [d], "stock",
+                           TradingCosts(), {}, variants=variants)
+    assert result["reason"] is None
+    assert len(calls) == 2  # No legacy simulation for engine-only variants.
+    assert [t["gross"] for t in result["trades"]] == [0.01, 0.02, 0.02]
+    assert calls[1]["conditions"][0]["condition_id"] == "ma_rising"
+    assert all(c["logic_operator"] == "OR" and c["evaluation_frequency"] == "weekly"
+               for c in calls)
+    assert rule_snapshot(current) == before
+
+
+def test_tuning_cli_report_and_reject_other_rule(monkeypatch, tmp_path):
+    import json
+    from dataclasses import asdict
+
+    from app.backtest.service import rule_snapshot
+    from app.research import rule_variants as module
+
+    seen = []
+
+    def research_stub(args):
+        variants = module.select_variants(args.variant_set, args.rule_id)
+        seen.append(variants)
+        return dict(
+            parameters=dict(universe=args.universe, start="2026-01-01", end="2026-01-31",
+                            rule_id=args.rule_id, variant_set=args.variant_set,
+                            variants=[asdict(v) for v in variants], rule=rule_snapshot(rule())),
+            universe_size=0, succeeded=0, skipped=[], benchmark_reason=None,
+            statistics=summarize([], date(2026, 1, 1), date(2026, 1, 31), variants))
+
+    monkeypatch.setattr(module, "run_research", research_stub)
+    json_path, md_path = tmp_path / "out.json", tmp_path / "out.md"
+    argv = ["--universe", "market", "--out-json", str(json_path), "--out-md", str(md_path)]
+    module.main(argv + ["--variant-set", "tuning"])
+    assert seen == [module.RULE2_TUNING]
+    report = md_path.read_text()
+    assert "舊戰法二" not in report and "拉回進場＝" not in report
+    assert report.count("\n- ") == 9
+    result = json.loads(json_path.read_text())
+    assert len(result["parameters"]["variants"]) == 9
+    for group in result["statistics"].values():
+        assert list(group) == [v.name for v in module.RULE2_TUNING]
+    with pytest.raises(SystemExit) as error:
+        module.main(argv + ["--variant-set", "tuning", "--rule-id", "2"])
+    assert error.value.code == 2
+    with pytest.raises(ValueError, match="rule_id"):
+        module.select_variants("tuning", 2)
+    module.main(argv)
+    assert seen[-1] == VARIANTS and len(VARIANTS) == 14
+
+
+def test_tuning_condition_definitions_and_order():
+    from app.research.rule_variants import RULE2_TUNING
+
+    assert [v.name for v in RULE2_TUNING] == [
+        "現行", "A1 出場緩衝 2%", "A2 出場連續 3 天", "B 進場等分歧", "C 斜率 ≥ 1%",
+        "A1＋B", "A1＋C", "B＋C", "A1＋B＋C"]
+    assert RULE2_TUNING[0].conditions is None
+    for i, variant in enumerate(RULE2_TUNING[1:], 1):
+        assert variant.source == "engine"
+        premise, entry, exit = variant.conditions
+        assert premise == ("ma_rising", {"period": 20, "slope_lookback": 5,
+                            **({"min_slope_pct": 0.01} if i in (4, 6, 7, 8) else {})}, "premise")
+        assert entry == ("ma_touch_rebound" if i in (3, 5, 7, 8) else "price_touch_ma",
+                         {"period": 20, "tolerance": 0.01}, "entry")
+        assert exit == ("close_below_ma_days", {"period": 20, "days": 3 if i == 2 else 2,
+                         **({"buffer": 0.02} if i in (1, 5, 6, 8) else {})}, "exit")

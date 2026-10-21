@@ -25,12 +25,19 @@ class MaRisingCondition(Condition):
 
         ma = _ma_at(bars, period, len(bars))
         ma_prev = _ma_at(bars, period, len(bars) - slope_lookback)
-        is_met = ma > ma_prev
+        min_slope_pct = params.get("min_slope_pct")
+        slope_pct = ma / ma_prev - 1 if ma_prev else 0.0
+        is_met = (ma > ma_prev if min_slope_pct is None
+                  else ma_prev != 0 and slope_pct >= float(min_slope_pct))
         status = "月線上揚" if is_met else "月線未上揚"
         comparison = ">" if is_met else "≤"
         reason = f"{status}（目前 {ma:.2f} {comparison} {slope_lookback} 日前 {ma_prev:.2f}）"
+        if min_slope_pct is not None:
+            reason = (f"月線斜率 {slope_pct:.2%}，門檻 ≥ {float(min_slope_pct):.2%}，"
+                      + ("成立" if is_met else "未成立"))
         return ConditionResult(
-            is_met, reason, indicators={"ma": ma, "ma_prev": ma_prev, "slope": ma - ma_prev}
+            is_met, reason, indicators={"ma": ma, "ma_prev": ma_prev, "slope": ma - ma_prev,
+                                      "slope_pct": slope_pct}
         )
 
 
@@ -74,6 +81,7 @@ class CloseBelowMaDaysCondition(Condition):
     def evaluate(self, bars: list[ConditionBar], params: dict[str, Any]) -> ConditionResult:
         period = int(params.get("period", 20))
         days = int(params.get("days", 2))
+        buffer = float(params.get("buffer", 0))
         if len(bars) < period + days - 1:
             return ConditionResult(False, "資料不足，無法判斷", data_sufficient=False)
 
@@ -82,7 +90,7 @@ class CloseBelowMaDaysCondition(Condition):
         for offset in range(days):
             end = len(bars) - offset
             day_ma = ma if offset == 0 else _ma_at(bars, period, end)
-            if bars[end - 1].close >= day_ma:
+            if bars[end - 1].close >= day_ma * (1 - buffer):
                 break
             below_days += 1
 
@@ -91,7 +99,40 @@ class CloseBelowMaDaysCondition(Condition):
             f"連續 {days} 天收盤跌破月線" if is_met
             else f"收盤未連續跌破月線（連續 {below_days} 天）"
         )
+        if buffer:
+            reason = (f"連續 {days} 天收盤低於月線下方 {buffer * 100:g}%" if is_met
+                      else f"收盤未連續 {days} 天低於月線下方 {buffer * 100:g}%"
+                      f"（連續 {below_days} 天）")
         return ConditionResult(
             is_met, reason,
-            indicators={"ma": ma, "close": bars[-1].close, "below_days": below_days},
+            indicators={"ma": ma, "close": bars[-1].close, "below_days": below_days,
+                        "buffer": buffer},
+        )
+
+
+@register_condition
+class MaTouchReboundCondition(Condition):
+    id = "ma_touch_rebound"
+    name = "回到月線後轉強"
+    required_timeframe = "日K"
+    update_frequency = UpdateFrequency.DAILY
+
+    def evaluate(self, bars: list[ConditionBar], params: dict[str, Any]) -> ConditionResult:
+        period = int(params.get("period", 20))
+        tolerance = float(params.get("tolerance", 0.01))
+        if len(bars) < period + 1:
+            return ConditionResult(False, "資料不足，無法判斷", data_sufficient=False)
+        ma = _ma_at(bars, period, len(bars))
+        prev_ma = _ma_at(bars, period, len(bars) - 1)
+        previous, latest = bars[-2:]
+        is_met = (
+            previous.low <= prev_ma * (1 + tolerance)
+            and previous.close >= prev_ma
+            and latest.close > previous.close
+            and latest.close >= ma
+        )
+        return ConditionResult(
+            is_met, "回到月線後轉強" if is_met else "未回到月線後轉強",
+            indicators={"ma": ma, "prev_ma": prev_ma, "close": latest.close,
+                        "prev_close": previous.close},
         )

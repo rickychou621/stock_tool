@@ -48,6 +48,7 @@ class Variant:
     breakout_lookback: int = 20
     breakout_turnover_mult: float = 2.0
     source: str = "signals"
+    conditions: tuple | None = None
 
     def __post_init__(self):
         if self.source not in ("signals", "engine"):
@@ -83,6 +84,40 @@ VARIANTS = (
     Variant("放量突破", entry="breakout"),
     Variant("放量突破＋出場緩衝 2 天", entry="breakout", exit_days=2),
 )
+
+def _tuning_conditions(*, buffer=0, days=2, rebound=False, slope=False):
+    return (
+        ("ma_rising", {"period": 20, "slope_lookback": 5,
+                       **({"min_slope_pct": 0.01} if slope else {})}, "premise"),
+        ("ma_touch_rebound" if rebound else "price_touch_ma",
+         {"period": 20, "tolerance": 0.01}, "entry"),
+        ("close_below_ma_days", {"period": 20, "days": days,
+                                 **({"buffer": buffer} if buffer else {})}, "exit"),
+    )
+
+
+RULE2_TUNING = (
+    Variant("現行", source="engine"),
+    Variant("A1 出場緩衝 2%", source="engine", conditions=_tuning_conditions(buffer=0.02)),
+    Variant("A2 出場連續 3 天", source="engine", conditions=_tuning_conditions(days=3)),
+    Variant("B 進場等分歧", source="engine", conditions=_tuning_conditions(rebound=True)),
+    Variant("C 斜率 ≥ 1%", source="engine", conditions=_tuning_conditions(slope=True)),
+    Variant("A1＋B", source="engine", conditions=_tuning_conditions(buffer=0.02, rebound=True)),
+    Variant("A1＋C", source="engine", conditions=_tuning_conditions(buffer=0.02, slope=True)),
+    Variant("B＋C", source="engine", conditions=_tuning_conditions(rebound=True, slope=True)),
+    Variant("A1＋B＋C", source="engine",
+            conditions=_tuning_conditions(buffer=0.02, rebound=True, slope=True)),
+)
+
+
+def select_variants(variant_set, rule_id):
+    if variant_set == "tuning":
+        if rule_id != 1:
+            raise ValueError("--variant-set tuning 僅支援 rule_id == 1")
+        return RULE2_TUNING
+    return VARIANTS
+
+
 LIQUIDITY_GROUPS = ("≥ 1 億", "1,000 萬～1 億", "< 1,000 萬", "無資料")
 
 
@@ -414,6 +449,8 @@ def statistics(trades):
         positive_excess_market_rate=mean(v > 0 for v in market) if market else None,
         average_excess_random=mean(randomized) if randomized else None,
         positive_excess_random_rate=mean(v > 0 for v in randomized) if randomized else None,
+        holding_le_10_rate=mean(t["holding_days"] <= 10 for t in trades) if trades else None,
+        holding_gt_20_rate=mean(t["holding_days"] > 20 for t in trades) if trades else None,
         median_holding_days=median(t["holding_days"] for t in trades) if trades else None,
         trimmed_average_net=mean(trimmed) if trimmed else None,
         trimmed_count=len(values) - len(trimmed),
@@ -421,7 +458,7 @@ def statistics(trades):
     )
 
 
-def summarize(trades, start, end):
+def summarize(trades, start, end, variants=VARIANTS):
     groups = [("全部", trades)]
     groups.extend(
         (
@@ -443,7 +480,7 @@ def summarize(trades, start, end):
         for year in range(max(2025, start.year), end.year + 1)
     )
     return {
-        label: {v.name: statistics([t for t in rows if t["variant"] == v.name]) for v in VARIANTS}
+        label: {v.name: statistics([t for t in rows if t["variant"] == v.name]) for v in variants}
         for label, rows in groups
     }
 
@@ -470,7 +507,22 @@ def markdown(result):
     lines.append(
         "現行定義＝DB 中的戰法定義，交易由正式回測引擎產生（與網頁回測、全市場掃描一致）。"
     )
-    if params["rule_id"] in LEGACY_RULES:
+    if params.get("variant_set") == "tuning":
+        lines.append("")
+        # Each line records the complete replacement, including unchanged roles.
+        for variant in params["variants"]:
+            conditions = variant["conditions"]
+            if conditions is None:
+                definition = "DB 戰法條件：" + json.dumps(
+                    params["rule"]["conditions"], ensure_ascii=False, sort_keys=True)
+            else:
+                definition = "；".join(
+                    f"{role}: {cid} {json.dumps(values, sort_keys=True)}"
+                    for cid, values, role in conditions
+                )
+            lines.append(f"- {variant['name']}：{definition}")
+        lines = [line for line in lines if not line.startswith("拉回進場＝")]
+    elif params["rule_id"] in LEGACY_RULES:
         lines.append("其餘變體以舊戰法二（bollinger_mid_up）的每日判斷重算，作為對照。")
     if result["benchmark_reason"]:
         lines += ["", f"0050 基準不可用：{result['benchmark_reason']}"]
@@ -482,8 +534,8 @@ def markdown(result):
             "| 變體 | 筆數 | 淨勝率 | 平均淨報酬 | 中位淨報酬 | 獲利因子 | 平均超額 |"
             " 超額正比例 | 超額樣本 | 平均超額（全市場） | 超額為正比例（全市場） |"
             " 平均超額（同股隨機） | 超額為正比例（同股隨機） |"
-            " 持有日中位數 | 去頂端 1% 平均淨 | 股票數 |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+            " 持有日中位數 | 持有 ≤ 10 天比例 | 持有 > 20 天比例 | 去頂端 1% 平均淨 | 股票數 |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
         for name, s in variants.items():
 
@@ -513,6 +565,8 @@ def markdown(result):
                 pct("average_excess_random"),
                 pct("positive_excess_random_rate"),
                 holding,
+                pct("holding_le_10_rate"),
+                pct("holding_gt_20_rate"),
                 pct("trimmed_average_net"),
                 str(s["stock_count"]),
             ]
@@ -551,6 +605,7 @@ def process_stock(
     benchmark,
     listed_on=None,
     absent=None,
+    variants=VARIANTS,
 ):
     started = time.perf_counter()
     try:
@@ -558,7 +613,7 @@ def process_stock(
             raw, events, turnover = load_data(db, ticker, warm, end, dates, listed_on, absent)
         payload = simulate(rule, ticker, raw, events, start, end, dates)
         signals = payload["signals"]
-        if rule.id in LEGACY_RULES:
+        if rule.id in LEGACY_RULES and any(v.source == "signals" for v in variants):
             legacy = rule_snapshot(rule)
             legacy["logic_operator"] = "AND"
             legacy["conditions"] = [
@@ -574,10 +629,22 @@ def process_stock(
         }
         trades = []
         feature_cache = {}
-        for variant in VARIANTS:
+        payloads = {None: payload}
+        for variant in variants:
             if variant.source == "engine":
+                key = (json.dumps(variant.conditions, sort_keys=True)
+                       if variant.conditions is not None else None)
+                if key not in payloads:
+                    replacement = rule_snapshot(rule)
+                    replacement["conditions"] = [
+                        dict(condition_id=cid, params=values.copy(), role=role, sort_order=i)
+                        for i, (cid, values, role) in enumerate(variant.conditions)
+                    ]
+                    payloads[key] = simulate(
+                        restore_rule(replacement), ticker, raw, events, start, end, dates)
+
                 trades.extend(engine_trades(
-                    ticker, payload, turnover, kind, variant, costs, benchmark,
+                    ticker, payloads[key], turnover, kind, variant, costs, benchmark,
                 ))
                 continue
             trades.extend(
@@ -614,6 +681,8 @@ def process_stock(
 
 def run_research(args, factory=SessionLocal):
     started = time.perf_counter()
+    variant_set = getattr(args, "variant_set", "all")
+    variants = select_variants(variant_set, args.rule_id)
     # --start overrides --years when the DB history is shorter than the default window.
     start = getattr(args, "start", None) or years_ago(args.end, args.years)
     costs = TradingCosts.from_settings(get_settings())
@@ -665,6 +734,7 @@ def run_research(args, factory=SessionLocal):
                     benchmark,
                     listed.get(ticker),
                     absent,
+                    variants,
                 )
                 for ticker in tickers
             ]
@@ -697,7 +767,8 @@ def run_research(args, factory=SessionLocal):
             warm_start=warm.isoformat(),
             rule=rule_snapshot(rule),
             costs=costs.snapshot(),
-            variants=[asdict(v) for v in VARIANTS],
+            variant_set=variant_set,
+            variants=[asdict(v) for v in variants],
         ),
         universe_size=len(tickers),
         succeeded=sum(r["reason"] is None for r in results),
@@ -705,7 +776,7 @@ def run_research(args, factory=SessionLocal):
         benchmark_reason=benchmark_reason,
         trades=trades,
         stocks=[{k: v for k, v in r.items() if k not in ("trades", "opens")} for r in results],
-        statistics=summarize(trades, start, args.end),
+        statistics=summarize(trades, start, args.end, variants),
         elapsed_seconds=time.perf_counter() - started,
     )
 
@@ -720,6 +791,7 @@ def positive_int(value):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--universe", required=True, choices=("market", "watchlist", "candidates"))
+    parser.add_argument("--variant-set", choices=("all", "tuning"), default="all")
     parser.add_argument("--rule-id", type=positive_int, default=1)
     parser.add_argument(
         "--end", type=date.fromisoformat, default=taipei_today() - timedelta(days=1)
@@ -731,6 +803,8 @@ def main(argv=None):
     parser.add_argument("--out-json", type=Path, required=True)
     parser.add_argument("--out-md", type=Path, required=True)
     args = parser.parse_args(argv)
+    if args.variant_set == "tuning" and args.rule_id != 1:
+        parser.error("--variant-set tuning 僅支援 rule_id == 1")
     if args.out_json.resolve() == args.out_md.resolve():
         parser.error("JSON 與 Markdown 路徑不可相同")
     result = run_research(args)
