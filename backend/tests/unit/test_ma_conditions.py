@@ -184,7 +184,10 @@ def test_rebound(closes, low, expected):
     assert result.is_met is expected
     assert result.indicators == {"ma": sum(closes[-2:]) / 2,
                                  "prev_ma": sum(closes[:2]) / 2,
-                                 "close": closes[-1], "prev_close": closes[-2]}
+                                 "close": closes[-1], "prev_close": closes[-2],
+                                 "close_distance_pct": closes[-1] / (sum(closes[-2:]) / 2) - 1}
+    assert result == MaTouchReboundCondition().evaluate(
+        bars, {"period": 2, "max_close_distance_pct": None})
 
 
 def test_rebound_today_below_ma_despite_rising_close():
@@ -205,3 +208,27 @@ def test_rebound_catalog_is_additive_repeatable_and_registered():
     assert set(re.findall(r"^\s+\('([^']+)',", sql, re.MULTILINE)) == {"ma_touch_rebound"}
     assert "watch_rule" not in sql and "DELETE" not in sql
     assert get_condition("ma_touch_rebound") is MaTouchReboundCondition
+
+
+@pytest.mark.parametrize("distance,expected", [(0.029, True), (0.031, False), (0.087, False)])
+def test_rebound_max_close_distance(distance, expected):
+    # Solve latest / ((19 * 100 + latest) / 20) - 1 = distance.
+    latest = 1900 * (1 + distance) / (19 - distance)
+    bars = _bars([100] * 20 + [latest])
+    condition = MaTouchReboundCondition()
+    unrestricted = condition.evaluate(bars, {})
+    assert unrestricted.is_met
+    assert unrestricted.reason == "回到月線後轉強"
+    assert unrestricted.indicators["close_distance_pct"] == pytest.approx(distance)
+    result = condition.evaluate(bars, {"max_close_distance_pct": 0.03})
+    assert result.is_met is expected
+    assert result.indicators == unrestricted.indicators
+    assert f"收盤距月線 {distance:.2%}" in result.reason
+    assert "門檻 ≤ 3.00%" in result.reason
+
+
+def test_rebound_distance_does_not_replace_rebound_requirement():
+    result = MaTouchReboundCondition().evaluate(
+        _bars([100] * 21), {"max_close_distance_pct": 0.03})
+    assert not result.is_met
+    assert result.indicators["close_distance_pct"] == 0

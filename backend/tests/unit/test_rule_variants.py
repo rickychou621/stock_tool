@@ -895,7 +895,8 @@ def test_condition_override_isolated_cached_and_preserves_rule_settings(monkeypa
     assert rule_snapshot(current) == before
 
 
-def test_tuning_cli_report_and_reject_other_rule(monkeypatch, tmp_path):
+@pytest.mark.parametrize("variant_set,count", [("tuning", 9), ("distance", 4)])
+def test_tuning_cli_report_and_reject_other_rule(monkeypatch, tmp_path, variant_set, count):
     import json
     from dataclasses import asdict
 
@@ -917,20 +918,25 @@ def test_tuning_cli_report_and_reject_other_rule(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "run_research", research_stub)
     json_path, md_path = tmp_path / "out.json", tmp_path / "out.md"
     argv = ["--universe", "market", "--out-json", str(json_path), "--out-md", str(md_path)]
-    module.main(argv + ["--variant-set", "tuning"])
-    assert seen == [module.RULE2_TUNING]
+    module.main(argv + ["--variant-set", variant_set])
+    variants = module.select_variants(variant_set, 1)
+    assert seen == [variants]
     report = md_path.read_text()
     assert "舊戰法二" not in report and "拉回進場＝" not in report
-    assert report.count("\n- ") == 9
+    assert report.count("\n- ") == count
     result = json.loads(json_path.read_text())
-    assert len(result["parameters"]["variants"]) == 9
+    assert len(result["parameters"]["variants"]) == count
     for group in result["statistics"].values():
-        assert list(group) == [v.name for v in module.RULE2_TUNING]
+        assert list(group) == [v.name for v in variants]
+    if variant_set == "distance":
+        assert 'max_close_distance_pct": 0.03' in report
+        for variant in variants:
+            assert f"- {variant.name}：" in report
     with pytest.raises(SystemExit) as error:
-        module.main(argv + ["--variant-set", "tuning", "--rule-id", "2"])
+        module.main(argv + ["--variant-set", variant_set, "--rule-id", "2"])
     assert error.value.code == 2
     with pytest.raises(ValueError, match="rule_id"):
-        module.select_variants("tuning", 2)
+        module.select_variants(variant_set, 2)
     module.main(argv)
     assert seen[-1] == VARIANTS and len(VARIANTS) == 14
 
@@ -1131,3 +1137,27 @@ def test_market_filters_use_longer_index_history_for_m1():
     first = study_dates[0].isoformat()
     assert short[m1][first] is False
     assert long[m1][first] is True
+
+
+def test_distance_condition_definitions_and_order():
+    from app.research.rule_variants import DISTANCE_VARIANTS, RULE2_TUNING, select_variants
+
+    variants = select_variants("distance", 1)
+    assert variants == DISTANCE_VARIANTS
+    assert [v.name for v in variants] == ["無限制", "≤ 2%", "≤ 3%", "≤ 5%"]
+    assert variants[0].conditions == RULE2_TUNING[5].conditions
+    for variant, distance in zip(variants, (None, 0.02, 0.03, 0.05), strict=True):
+        assert variant.source == "engine"
+        premise, entry, exit = variant.conditions
+        assert premise == ("ma_rising", {"period": 20, "slope_lookback": 5}, "premise")
+        assert entry == ("ma_touch_rebound", {
+            "period": 20, "tolerance": 0.01,
+            **({"max_close_distance_pct": distance} if distance is not None else {}),
+        }, "entry")
+        assert exit == ("close_below_ma_days", {"period": 20, "days": 2, "buffer": 0.02}, "exit")
+
+
+def test_distance_parameter_only_applies_to_rebound():
+    from app.research.rule_variants import _tuning_conditions
+
+    assert _tuning_conditions(max_distance=0.03) == _tuning_conditions()

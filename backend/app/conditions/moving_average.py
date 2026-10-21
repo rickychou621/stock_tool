@@ -125,14 +125,22 @@ class MaTouchReboundCondition(Condition):
         ma = _ma_at(bars, period, len(bars))
         prev_ma = _ma_at(bars, period, len(bars) - 1)
         previous, latest = bars[-2:]
+        max_close_distance_pct = params.get("max_close_distance_pct")
+        close_distance_pct = latest.close / ma - 1 if ma else 0.0
         is_met = (
             previous.low <= prev_ma * (1 + tolerance)
             and previous.close >= prev_ma
             and latest.close > previous.close
             and latest.close >= ma
         )
+        if max_close_distance_pct is not None:
+            is_met = is_met and ma != 0 and close_distance_pct <= float(max_close_distance_pct)
+        reason = "回到月線後轉強" if is_met else "未回到月線後轉強"
+        if max_close_distance_pct is not None:
+            reason += (f"（收盤距月線 {close_distance_pct:.2%}，"
+                       f"門檻 ≤ {float(max_close_distance_pct):.2%}）")
         return ConditionResult(
-            is_met, "回到月線後轉強" if is_met else "未回到月線後轉強",
+            is_met, reason,
             indicators={"ma": ma, "prev_ma": prev_ma, "close": latest.close,
-                        "prev_close": previous.close},
+                        "prev_close": previous.close, "close_distance_pct": close_distance_pct},
         )

@@ -85,12 +85,14 @@ VARIANTS = (
     Variant("放量突破＋出場緩衝 2 天", entry="breakout", exit_days=2),
 )
 
-def _tuning_conditions(*, buffer=0, days=2, rebound=False, slope=False):
+def _tuning_conditions(*, buffer=0, days=2, rebound=False, slope=False, max_distance=None):
     return (
         ("ma_rising", {"period": 20, "slope_lookback": 5,
                        **({"min_slope_pct": 0.01} if slope else {})}, "premise"),
         ("ma_touch_rebound" if rebound else "price_touch_ma",
-         {"period": 20, "tolerance": 0.01}, "entry"),
+         {"period": 20, "tolerance": 0.01,
+          **({"max_close_distance_pct": max_distance}
+             if rebound and max_distance is not None else {})}, "entry"),
         ("close_below_ma_days", {"period": 20, "days": days,
                                  **({"buffer": buffer} if buffer else {})}, "exit"),
     )
@@ -110,6 +112,13 @@ RULE2_TUNING = (
 )
 
 
+DISTANCE_VARIANTS = tuple(
+    Variant(name, source="engine",
+            conditions=_tuning_conditions(buffer=0.02, rebound=True, max_distance=distance))
+    for name, distance in (("無限制", None), ("≤ 2%", 0.02), ("≤ 3%", 0.03), ("≤ 5%", 0.05))
+)
+
+
 MARKET_VARIANTS = tuple(
     Variant(name, source="engine", conditions=_tuning_conditions(buffer=0.02, rebound=True))
     for name in ("無濾網", "M1 0050 在 60 日線上", "M2 0050 月線上揚",
@@ -118,6 +127,10 @@ MARKET_VARIANTS = tuple(
 
 
 def select_variants(variant_set, rule_id):
+    if variant_set == "distance":
+        if rule_id != 1:
+            raise ValueError("--variant-set distance 僅支援 rule_id == 1")
+        return DISTANCE_VARIANTS
     if variant_set == "market":
         if rule_id != 1:
             raise ValueError("--variant-set market 僅支援 rule_id == 1")
@@ -643,7 +656,7 @@ def markdown(result):
                 value = result["entry_allowance"][period][variant.name]
                 cells.append("—" if value is None else f"{value:.1%}")
             lines.append("| " + " | ".join(cells) + " |")
-    elif params.get("variant_set") == "tuning":
+    elif params.get("variant_set") in ("tuning", "distance"):
         lines.append("")
         # Each line records the complete replacement, including unchanged roles.
         for variant in params["variants"]:
@@ -976,7 +989,9 @@ def positive_int(value):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--universe", required=True, choices=("market", "watchlist", "candidates"))
-    parser.add_argument("--variant-set", choices=("all", "tuning", "market"), default="all")
+    parser.add_argument(
+        "--variant-set", choices=("all", "tuning", "market", "distance"), default="all"
+    )
     parser.add_argument("--rule-id", type=positive_int, default=1)
     parser.add_argument(
         "--end", type=date.fromisoformat, default=taipei_today() - timedelta(days=1)
@@ -988,7 +1003,7 @@ def main(argv=None):
     parser.add_argument("--out-json", type=Path, required=True)
     parser.add_argument("--out-md", type=Path, required=True)
     args = parser.parse_args(argv)
-    if args.variant_set in ("tuning", "market") and args.rule_id != 1:
+    if args.variant_set in ("tuning", "market", "distance") and args.rule_id != 1:
         parser.error(f"--variant-set {args.variant_set} 僅支援 rule_id == 1")
     if args.out_json.resolve() == args.out_md.resolve():
         parser.error("JSON 與 Markdown 路徑不可相同")
