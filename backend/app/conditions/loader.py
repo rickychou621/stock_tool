@@ -3,6 +3,7 @@ CandidatePoolService都靠這個function拿資料，只寫一份轉換邏輯。"
 
 from app.conditions.types import ConditionBar
 from app.market_data.repository import MarketDataRepository
+from app.market_data.validation import is_no_trade
 
 
 def load_condition_bars(repository: MarketDataRepository, ticker: str) -> list[ConditionBar]:
@@ -17,4 +18,5 @@ def load_condition_bars(repository: MarketDataRepository, ticker: str) -> list[C
             volume=bar.volume,
         )
         for bar in db_bars
+        if not is_no_trade(bar)
     ]

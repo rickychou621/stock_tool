@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.market_data.models import Stock
 from app.market_data.repository import MarketDataRepository
 from app.market_data.service import MarketDataService
+from app.market_data.validation import is_no_trade
 from app.market_scan.models import MarketInstrument
 from app.rules.evaluation import RuleEvaluationService
 from app.rules.models import WatchRule
@@ -22,9 +23,11 @@ from app.watchlist.protective_stop import protective_stop
 
 
 def validate_bars(bars, day: date):
-    if not bars or bars[-1].trade_date != day:
+    if not bars or bars[-1].trade_date != day or is_no_trade(bars[-1]):
         raise ValueError(f"最新日K不是本次交易日 {day}，可能尚未更新或個股停牌")
     for bar in bars:
+        if is_no_trade(bar):
+            continue
         for prefix in ("", "adj_"):
             prices = [getattr(bar, prefix + key) for key in ("open", "high", "low", "close")]
             if any(

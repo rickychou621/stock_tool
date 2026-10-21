@@ -21,7 +21,7 @@ from app.scheduler.coordination import recover_interrupted
 from app.scheduler.daily_jobs import run_daily_watchlist
 from app.scheduler.models import ScheduleError, ScheduleRun, ScheduleSettings
 from app.scheduler.service import latest_run, read_settings, utcnow
-from app.scheduler.worker import process_stock
+from app.scheduler.worker import process_stock, validate_bars
 from app.watchlist.evaluation import fingerprint
 from app.watchlist.models import HoldingsWatchlist, WatchlistEvaluation
 
@@ -641,3 +641,94 @@ def test_each_failed_page_records_error_and_continues(factory, monkeypatch):
         assert {e.reason for e in summary.errors} == {
             "Telegram 觀察清單通知失敗（RuntimeError）", "Telegram 觀察清單通知失敗（ValueError）",
         }
+
+
+@pytest.mark.parametrize("volume", [0, 405])
+@pytest.mark.parametrize("adjusted", [0, None])
+@pytest.mark.parametrize("latest", [False, True])
+def test_validate_bars_no_trade_days(factory, volume, adjusted, latest):
+    from app.market_data.repository import MarketDataRepository
+
+    seed_bars(factory)
+    with factory() as db:
+        bars = MarketDataRepository(db).get_all_bars("2330")
+        no_trade = bars[-1] if latest else bars[-2]
+        for key in ("open", "high", "low", "close"):
+            setattr(no_trade, key, 0)
+            setattr(no_trade, "adj_" + key, adjusted)
+        no_trade.volume = volume
+        if latest:
+            with pytest.raises(ValueError, match="最新日K不是本次交易日"):
+                validate_bars(bars, DAY)
+        else:
+            validate_bars(bars, DAY)
+
+
+@pytest.mark.parametrize("prefix", ["", "adj_"])
+def test_validate_bars_rejects_invalid_high_low(factory, prefix):
+    from app.market_data.repository import MarketDataRepository
+
+    seed_bars(factory)
+    with factory() as db:
+        bars = MarketDataRepository(db).get_all_bars("2330")
+        setattr(bars[-2], prefix + "high", 80)
+        with pytest.raises(ValueError, match="OHLC 高低價關係錯誤"):
+            validate_bars(bars, DAY)
+
+
+@pytest.mark.parametrize("volume", [0, 405])
+@pytest.mark.parametrize("adjusted", [0, None])
+def test_condition_loader_excludes_no_trade_days_from_ma(factory, volume, adjusted):
+    from app.conditions.loader import load_condition_bars
+    from app.conditions.moving_average import MaRisingCondition
+    from app.market_data.repository import MarketDataRepository
+
+    seed_bars(factory, count=26)
+    with factory() as db:
+        repository = MarketDataRepository(db)
+        no_trade = repository.get_all_bars("2330")[-2]
+        for key in ("open", "high", "low", "close"):
+            setattr(no_trade, key, 0)
+            setattr(no_trade, "adj_" + key, adjusted)
+        no_trade.volume = volume
+        db.commit()
+        bars = load_condition_bars(repository, "2330")
+        assert len(bars) == 25
+        assert no_trade.trade_date not in [bar.trade_date for bar in bars]
+        result = MaRisingCondition().evaluate(bars, {})
+        assert result.data_sufficient
+        assert result.indicators["ma"] == 105
+        assert result.indicators["ma_prev"] == 105
+
+
+def test_condition_loader_preserves_other_invalid_rows(factory):
+    from app.conditions.loader import load_condition_bars
+    from app.market_data.repository import MarketDataRepository
+
+    seed_bars(factory, count=1)
+    with factory() as db:
+        repository = MarketDataRepository(db)
+        bar = repository.get_all_bars("2330")[0]
+        bar.adj_high = 80
+        db.commit()
+        loaded = load_condition_bars(repository, "2330")
+        assert len(loaded) == 1
+        assert loaded[0].high == 80
+
+
+@pytest.mark.parametrize("length", [12, 2000, 2001, 5000])
+def test_schedule_error_reason_is_bounded_after_save(factory, length):
+    reason = "錯" * length
+    with factory() as db:
+        error = ScheduleError(batch_id="reason-test", ticker="2330", occurred_at=utcnow(),
+                              reason=reason)
+        db.add(error)
+        db.commit()
+        error_id = error.id
+    with factory() as db:
+        saved = db.get(ScheduleError, error_id)
+        if length <= 2000:
+            assert saved.reason == reason
+        else:
+            assert len(saved.reason) <= 2000
+            assert saved.reason == "錯" * 1990 + "…（已截斷）"

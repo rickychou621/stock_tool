@@ -3,7 +3,7 @@
 from datetime import date, datetime
 
 from sqlalchemy import JSON, Boolean, Date, DateTime, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from app.core.db import Base
 
@@ -37,3 +37,7 @@ class ScheduleError(Base):
     ticker: Mapped[str | None] = mapped_column(String(10), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime)
     reason: Mapped[str] = mapped_column(Text)
+
+    @validates("reason")
+    def validate_reason(self, key: str, reason: str) -> str:
+        return reason[:1990] + "…（已截斷）" if len(reason) > 2000 else reason
