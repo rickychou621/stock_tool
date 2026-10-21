@@ -47,8 +47,11 @@ class Variant:
     pullback_pct: float = 0.01
     breakout_lookback: int = 20
     breakout_turnover_mult: float = 2.0
+    source: str = "signals"
 
     def __post_init__(self):
+        if self.source not in ("signals", "engine"):
+            raise ValueError("source 必須為 signals 或 engine")
         if self.exit_days < 1:
             raise ValueError("exit_days 必須至少為 1")
         if self.entry not in ("event", "pullback", "breakout"):
@@ -61,7 +64,13 @@ class Variant:
             raise ValueError("breakout_lookback 必須為整數")
 
 
+LEGACY_RULES = {1: [("bollinger_mid_up", {"period": 20}, "premise")]}
+
+
 VARIANTS = (
+    Variant("現行定義", source="engine"),
+    Variant("現行定義＋成交金額 ≥ 1,000 萬", source="engine", min_turn=1e7),
+    Variant("現行定義＋成交金額 ≥ 1 億", source="engine", min_turn=1e8),
     Variant("原規則"),
     Variant("出場緩衝 2 天", exit_days=2),
     Variant("斜率 ≥ 1%", min_slope=0.01),
@@ -187,8 +196,8 @@ def load_data(db, ticker, start, end, trading_dates, listed_on=None, absent=None
     return raw, sorted(events, key=lambda e: e.ex_dividend_date), turnover
 
 
-def load_benchmark(db, start, end, dates):
-    raw, events, _ = load_data(db, "0050", start, end, dates)
+def load_benchmark(db, start, end, dates, listed_on=None, absent=None):
+    raw, events, _ = load_data(db, "0050", start, end, dates, listed_on, absent)
     valid = [b for b in raw if usable(b)]
     if not valid:
         raise DataUnavailable("0050 無有效歷史行情")
@@ -308,6 +317,31 @@ def trades_for(
             if ok:
                 pending, signal_day = "buy", day
         prior = met
+    return trades
+
+
+def engine_trades(ticker, payload, turnover, kind, variant, costs, benchmark):
+    """Project official closed fills without replaying engine decisions."""
+    trades = []
+    for trade in payload["trades"]:
+        if trade["status"] != "closed":
+            continue
+        signal_day = trade["entrySignalDate"]
+        turn = turnover.get(signal_day)
+        if variant.min_turn is not None and (turn is None or turn < variant.min_turn):
+            continue
+        entry, exit = trade["entryDate"], trade["exitDate"]
+        net = costs.net_return(trade["entryPrice"], trade["exitPrice"], kind)
+        bo = benchmark.get(entry, {}).get("open")
+        bx = benchmark.get(exit, {}).get("open")
+        trades.append(dict(
+            ticker=ticker, variant=variant.name, signal_date=signal_day,
+            entry=entry, exit=exit, gross=trade["returnRate"], net=net,
+            excess=net - (bx / bo - 1) if bo and bx else None,
+            excess_market=None, excess_random=None,
+            holding_days=trade["holdingDays"], signal_turnover=turn,
+            entry_year=int(entry[:4]),
+        ))
     return trades
 
 
@@ -433,6 +467,11 @@ def markdown(result):
         "去頂端 1% 使用淨報酬排序，移除筆數向上取整；單筆組移除後為無資料。",
         "獲利因子無虧損時顯示無虧損；其他無法計算值顯示 —。",
     ]
+    lines.append(
+        "現行定義＝DB 中的戰法定義，交易由正式回測引擎產生（與網頁回測、全市場掃描一致）。"
+    )
+    if params["rule_id"] in LEGACY_RULES:
+        lines.append("其餘變體以舊戰法二（bollinger_mid_up）的每日判斷重算，作為對照。")
     if result["benchmark_reason"]:
         lines += ["", f"0050 基準不可用：{result['benchmark_reason']}"]
     for group, variants in result["statistics"].items():
@@ -518,6 +557,17 @@ def process_stock(
         with factory() as db:
             raw, events, turnover = load_data(db, ticker, warm, end, dates, listed_on, absent)
         payload = simulate(rule, ticker, raw, events, start, end, dates)
+        signals = payload["signals"]
+        if rule.id in LEGACY_RULES:
+            legacy = rule_snapshot(rule)
+            legacy["logic_operator"] = "AND"
+            legacy["conditions"] = [
+                dict(condition_id=condition, params=params.copy(), role=role, sort_order=i)
+                for i, (condition, params, role) in enumerate(LEGACY_RULES[rule.id])
+            ]
+            signals = simulate(
+                restore_rule(legacy), ticker, raw, events, start, end, dates
+            )["signals"]
         prices = {
             b.trade_date.isoformat(): b
             for b in adjusted_bars([b for b in raw if usable(b)], events)
@@ -525,10 +575,15 @@ def process_stock(
         trades = []
         feature_cache = {}
         for variant in VARIANTS:
+            if variant.source == "engine":
+                trades.extend(engine_trades(
+                    ticker, payload, turnover, kind, variant, costs, benchmark,
+                ))
+                continue
             trades.extend(
                 trades_for(
                     ticker,
-                    payload["signals"],
+                    signals,
                     prices,
                     turnover,
                     kind,
@@ -579,7 +634,9 @@ def run_research(args, factory=SessionLocal):
         benchmark, benchmark_reason = {}, calendar_reason
         if not calendar_reason:
             try:
-                benchmark = load_benchmark(db, warm, args.end, dates)
+                benchmark = load_benchmark(
+                    db, warm, args.end, dates, listed.get("0050"), absent
+                )
             except Exception as exc:
                 benchmark_reason = f"{type(exc).__name__}: {exc}"
     results = []

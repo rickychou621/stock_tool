@@ -58,7 +58,7 @@ def replay(met, variant, slope=1, turnover=1e8):
     return trades_for("TEST", signals, prices, turns, "stock", variant, TradingCosts(), {}, dates)
 
 
-@pytest.mark.parametrize("variant", VARIANTS[:7], ids=lambda v: v.name)
+@pytest.mark.parametrize("variant", VARIANTS[3:10], ids=lambda v: v.name)
 def test_all_seven_variants_execute_next_open(variant):
     trades = replay([False, True, True, False, False, False, False], variant)
     assert len(trades) == 1
@@ -89,13 +89,13 @@ def test_turnover_boundary_and_signal_day(turnover, accepted):
     dates, signals, prices, turns = synthetic([True, False, False], turnover=turnover)
     turns[dates[1].isoformat()] = 0  # Fill-day turnover must not filter the entry.
     trades = trades_for(
-        "T", signals, prices, turns, "stock", VARIANTS[3], TradingCosts(), {}, dates
+        "T", signals, prices, turns, "stock", VARIANTS[6], TradingCosts(), {}, dates
     )
     assert bool(trades) == accepted
 
 
 def test_buffer_resets_on_recovery_and_requires_consecutive_failures():
-    trades = replay([True, False, True, False, False, False], VARIANTS[1])
+    trades = replay([True, False, True, False, False, False], VARIANTS[4])
     assert len(trades) == 1
     assert trades[0]["exit"] == "2026-01-06"
 
@@ -104,20 +104,20 @@ def test_rejected_entry_cannot_enter_on_continued_signal():
     dates, signals, prices, turns = synthetic([True, True, False, False])
     turns[dates[0].isoformat()] = 0
     assert not trades_for(
-        "T", signals, prices, turns, "stock", VARIANTS[3], TradingCosts(), {}, dates
+        "T", signals, prices, turns, "stock", VARIANTS[6], TradingCosts(), {}, dates
     )
 
 
 @pytest.mark.parametrize("met", [[True], [True, True], [True, False]])
-@pytest.mark.parametrize("variant", VARIANTS[:7], ids=lambda v: v.name)
+@pytest.mark.parametrize("variant", VARIANTS[3:10], ids=lambda v: v.name)
 def test_unfilled_open_and_pending_sell_excluded(met, variant):
     assert replay(met, variant) == []
 
 
 def test_combined_requires_both_filters_and_missing_indicators_fail():
-    assert not replay([True, False, False, False], VARIANTS[4], slope=0.5)
-    assert not replay([True, False, False, False], VARIANTS[4], turnover=1e7)
-    assert not replay([True, False, False], VARIANTS[2], slope=None)
+    assert not replay([True, False, False, False], VARIANTS[7], slope=0.5)
+    assert not replay([True, False, False, False], VARIANTS[7], turnover=1e7)
+    assert not replay([True, False, False], VARIANTS[5], slope=None)
 
 
 @pytest.fixture
@@ -206,7 +206,7 @@ def test_sqlite_baseline_matches_production_and_loader_is_read_only(db):
         prices,
         turnover,
         "etf",
-        VARIANTS[0],
+        VARIANTS[3],
         TradingCosts(),
         benchmark,
         dates,
@@ -316,7 +316,7 @@ def test_statistics_trim_missing_benchmark_and_empty_groups():
 
 
 def test_report_groups_and_three_placeholders():
-    trades = replay([True, False, False], VARIANTS[0])
+    trades = replay([True, False, False], VARIANTS[3])
     groups = summarize(trades, date(2023, 10, 19), date(2026, 10, 19))
     assert groups["進場年份：2026"]["原規則"]["count"] == 1
     assert groups["進場期間：2023-10～2024-12"]["原規則"]["count"] == 0
@@ -364,7 +364,7 @@ def test_suspended_sessions_count_toward_holding_days():
     # No signal/fill on Jan 3, but it remains an exchange session.
     signals.pop(2)
     trade = trades_for(
-        "T", signals, prices, turns, "stock", VARIANTS[0], TradingCosts(), {}, dates
+        "T", signals, prices, turns, "stock", VARIANTS[3], TradingCosts(), {}, dates
     )[0]
     assert trade["entry"] == "2026-01-02"
     assert trade["exit"] == "2026-01-05"
@@ -518,7 +518,9 @@ def test_process_stock_returns_only_usable_adjusted_opens(monkeypatch):
     monkeypatch.setattr(module, "load_data", lambda *args: (raw, events, {}))
     monkeypatch.setattr(
         module, "simulate",
-        lambda *args: dict(signals=[], actualStart=str(days[0]), actualEnd=str(days[-1])),
+        lambda *args: dict(
+            trades=[], signals=[], actualStart=str(days[0]), actualEnd=str(days[-1]),
+        ),
     )
     result = process_stock(
         nullcontext, "A", rule(), days[0], days[-1], days[0], days,
@@ -651,7 +653,7 @@ def test_variant_order_and_entry_validation():
         Variant("invalid", entry="unknown")
     with pytest.raises(ValueError, match="整數"):
         Variant("invalid", breakout_lookback=1.5)
-    assert [(v.name, v.entry, v.exit_days) for v in VARIANTS[7:]] == [
+    assert [(v.name, v.entry, v.exit_days) for v in VARIANTS[10:]] == [
         ("拉回進場", "pullback", 1), ("拉回進場＋出場緩衝 2 天", "pullback", 2),
         ("放量突破", "breakout", 1), ("放量突破＋出場緩衝 2 天", "breakout", 2),
     ]
@@ -667,7 +669,7 @@ def test_process_stock_shares_features_across_variants(monkeypatch):
     monkeypatch.setattr(module, "load_data", lambda *args: (list(prices.values()), [], turns))
     monkeypatch.setattr(module, "adjusted_bars", lambda bars, events: bars)
     monkeypatch.setattr(module, "simulate", lambda *args: dict(
-        signals=signals, actualStart=str(dates[0]), actualEnd=str(dates[-1]),
+        trades=[], signals=signals, actualStart=str(dates[0]), actualEnd=str(dates[-1]),
     ))
     spy = Mock(wraps=module.entry_features)
     monkeypatch.setattr(module, "entry_features", spy)
@@ -712,3 +714,135 @@ def test_breakout_counts_usable_bars_not_calendar_days():
     assert len(trigger_trades("breakout", dates, signals, prices, turns)) == 1
     del prices[str(dates[11])]
     assert not trigger_trades("breakout", dates, signals, prices, turns)
+
+
+@pytest.mark.parametrize("listed", [False, True])
+def test_benchmark_confirmed_absence_and_listing(db, listed):
+    days = [date(2025, 6, d) for d in (10, 11, 12, 13, 16, 17, 18)]
+    db.add(Stock(ticker="0050", name="ETF", market="上市"))
+    for i, day in enumerate((days[0], days[-1])):
+        db.add(StockPriceDaily(
+            id=100 + i, ticker="0050", trade_date=day,
+            open=100, high=101, low=99, close=100, volume=100,
+            adj_open=100, adj_high=101, adj_low=99, adj_close=100,
+        ))
+    db.commit()
+    absent = {day: {"0050"} for day in days[1:-1]}
+    requested = [days[0] - timedelta(days=1), *days] if listed else days
+    with pytest.raises(DataUnavailable):
+        load_benchmark(db, requested[0], days[-1], requested)
+    result = load_benchmark(
+        db, requested[0], days[-1], requested,
+        listed_on=days[0] if listed else None, absent=absent,
+    )
+    assert set(result) == {str(days[0]), str(days[-1])}
+
+
+@pytest.mark.parametrize("rule_id", [1, 3])
+def test_process_stock_engine_and_signal_sources(monkeypatch, rule_id):
+    from contextlib import nullcontext
+    from unittest.mock import Mock
+
+    from app.backtest.service import restore_rule
+    from app.conditions.types import ConditionBar
+    from app.research import rule_variants as module
+
+    values = [100] * 25 + [110, 115, 120, 110, 90, 80, 85, 105, 115, 120, 90, 80, 100]
+    dates = [date(2026, 1, 1) + timedelta(days=i) for i in range(len(values))]
+    raw = [
+        ConditionBar(d, v, v + 1, v - 15, v, volume=100)
+        for d, v in zip(dates, values, strict=True)
+    ]
+    current = restore_rule(dict(
+        id=rule_id, name="roles", logic_operator="AND", conditions=[
+            dict(condition_id=c, params=p, role=r, sort_order=i)
+            for i, (c, p, r) in enumerate([
+                ("ma_rising", {"period": 2, "slope_lookback": 1}, "premise"),
+                ("price_touch_ma", {"period": 2}, "entry"),
+                ("close_below_ma_days", {"period": 2, "days": 2}, "exit"),
+            ])
+        ],
+    ))
+    start, end = dates[25], dates[-1]
+    payload = simulate(current, "T", raw, [], start, end, dates)
+    closed = [t for t in payload["trades"] if t["status"] == "closed"]
+    assert closed
+    turns = {str(d): 1e8 for d in dates}
+    benchmark = {str(d): {"open": 100 + i} for i, d in enumerate(dates)}
+    monkeypatch.setattr(module, "load_data", lambda *args: (raw, [], turns))
+    spy = Mock(wraps=simulate)
+    monkeypatch.setattr(module, "simulate", spy)
+    result = process_stock(
+        nullcontext, "T", current, start, end, dates[0], dates,
+        "etf", TradingCosts(), benchmark,
+    )
+    assert result["reason"] is None
+    assert spy.call_count == (2 if rule_id == 1 else 1)
+    for variant in VARIANTS[:3]:
+        actual = [t for t in result["trades"] if t["variant"] == variant.name]
+        assert len(actual) == len(closed)
+        for a, b in zip(actual, closed, strict=True):
+            assert (a["entry"], a["exit"], a["gross"]) == (
+                b["entryDate"], b["exitDate"], b["returnRate"],
+            )
+            assert a["signal_date"] == b["entrySignalDate"]
+            assert a["holding_days"] == b["holdingDays"]
+            assert a["net"] == TradingCosts().net_return(b["entryPrice"], b["exitPrice"], "etf")
+            assert a["excess"] == pytest.approx(
+                a["net"] - (benchmark[a["exit"]]["open"] / benchmark[a["entry"]]["open"] - 1)
+            )
+    expected_payload = payload
+    if rule_id == 1:
+        legacy = rule()
+        legacy.conditions[0].params = {"period": 20}
+        expected_payload = simulate(legacy, "T", raw, [], start, end, dates)
+        assert expected_payload["signals"] != payload["signals"]
+    prices = {str(b.trade_date): b for b in raw}
+    for variant in VARIANTS[3:]:
+        expected = trades_for(
+            "T", expected_payload["signals"], prices, turns, "etf", variant,
+            TradingCosts(), benchmark, dates,
+        )
+        assert [t for t in result["trades"] if t["variant"] == variant.name] == expected
+    assert any(t["variant"] == "原規則" for t in result["trades"])
+
+
+@pytest.mark.parametrize("threshold", [1e7, 1e8])
+@pytest.mark.parametrize("delta", [None, -1, 0, 1])
+def test_engine_turnover_filter_uses_signal_day(threshold, delta):
+    from app.research.rule_variants import engine_trades
+
+    trade = dict(
+        status="closed", entrySignalDate="2026-01-01", entryDate="2026-01-02",
+        exitDate="2026-01-04", entryPrice=100, exitPrice=110, returnRate=0.1, holdingDays=2,
+    )
+    turn = None if delta is None else threshold + delta
+    payload = {"trades": [trade, {"status": "open"}, {"status": "unfilled"}]}
+    result = engine_trades(
+        "T", payload, {"2026-01-01": turn, "2026-01-02": 0}, "stock",
+        Variant("engine", source="engine", min_turn=threshold), TradingCosts(), {},
+    )
+    assert bool(result) == (delta is not None and delta >= 0)
+    if result:
+        assert result[0]["signal_turnover"] == turn
+        assert result[0]["excess"] is None
+        assert result[0]["excess_market"] is None
+        assert result[0]["excess_random"] is None
+
+
+def test_engine_variant_order_and_report_definition():
+    assert [(v.name, v.source, v.min_turn) for v in VARIANTS[:3]] == [
+        ("現行定義", "engine", None),
+        ("現行定義＋成交金額 ≥ 1,000 萬", "engine", 1e7),
+        ("現行定義＋成交金額 ≥ 1 億", "engine", 1e8),
+    ]
+    with pytest.raises(ValueError, match="source"):
+        Variant("invalid", source="unknown")
+    for rule_id in (1, 3):
+        report = markdown(dict(
+            parameters=dict(universe="market", start="2026-01-01", end="2026-01-31",
+                            rule_id=rule_id),
+            universe_size=0, succeeded=0, skipped=[], benchmark_reason=None, statistics={},
+        ))
+        assert "現行定義＝DB 中的戰法定義" in report
+        assert ("其餘變體以舊戰法二" in report) == (rule_id == 1)
