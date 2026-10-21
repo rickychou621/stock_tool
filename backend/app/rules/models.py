@@ -14,6 +14,9 @@ class WatchRule(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100))
     logic_operator: Mapped[str] = mapped_column(String(5), default="AND")
+    evaluation_frequency: Mapped[str] = mapped_column(
+        String(10), default="daily", server_default="daily"
+    )
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -23,6 +26,12 @@ class WatchRule(Base):
     conditions: Mapped[list["WatchRuleCondition"]] = relationship(
         back_populates="rule", cascade="all, delete-orphan"
     )
+
+    @validates("evaluation_frequency")
+    def validate_evaluation_frequency(self, key: str, value: str) -> str:
+        if value not in {"daily", "weekly"}:
+            raise ValueError("無效的判斷頻率")
+        return value
 
 
 class WatchRuleCondition(Base):

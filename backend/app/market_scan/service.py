@@ -67,6 +67,7 @@ def chosen_rules(db, ids=None):
             id=r.id,
             name=r.name,
             logic_operator=r.logic_operator,
+            evaluation_frequency=getattr(r, "evaluation_frequency", None) or "daily",
             conditions=[
                 SimpleNamespace(
                     condition_id=c.condition_id,

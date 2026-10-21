@@ -19,7 +19,10 @@ class RuleService:
         return self._repository.list_all(limit)
 
     def create_rule(self, payload: WatchRuleCreateSchema) -> WatchRule:
-        rule = WatchRule(name=payload.name, logic_operator=payload.logic_operator, is_enabled=True)
+        rule = WatchRule(
+            name=payload.name, logic_operator=payload.logic_operator, is_enabled=True,
+            evaluation_frequency=payload.evaluation_frequency,
+        )
         rule.conditions = [
             WatchRuleCondition(
                 condition_id=c.condition_id, params=c.params, sort_order=i, role=c.role

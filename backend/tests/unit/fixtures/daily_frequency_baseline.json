@@ -1,0 +1,213 @@
+{
+  "actualStart": "2026-01-07",
+  "actualEnd": "2026-01-13",
+  "requestedStart": "2026-01-05",
+  "requestedEnd": "2026-01-13",
+  "priceBasisDate": "2026-01-13",
+  "trades": [
+    {
+      "ticker": "TEST",
+      "entrySignalDate": "2026-01-07",
+      "entryDate": "2026-01-08",
+      "entryPrice": 13.0,
+      "exitSignalDate": "2026-01-10",
+      "exitDate": "2026-01-11",
+      "exitPrice": 7.0,
+      "status": "closed",
+      "returnRate": -0.46153846153846156,
+      "unrealizedReturn": null,
+      "holdingDays": 3,
+      "valuationDate": null,
+      "pendingSide": null
+    },
+    {
+      "ticker": "TEST",
+      "entrySignalDate": "2026-01-12",
+      "entryDate": "2026-01-13",
+      "entryPrice": 11.0,
+      "exitSignalDate": null,
+      "exitDate": null,
+      "exitPrice": null,
+      "status": "open",
+      "returnRate": null,
+      "unrealizedReturn": 0.09090909090909083,
+      "holdingDays": 0,
+      "valuationDate": "2026-01-13",
+      "pendingSide": null
+    }
+  ],
+  "signals": [
+    {
+      "date": "2026-01-07",
+      "state": "first",
+      "isMet": true,
+      "premiseMet": true,
+      "entryTriggered": null,
+      "exitTriggered": null,
+      "conditions": [
+        {
+          "condition_id": "bollinger_mid_up",
+          "is_met": true,
+          "reason": "\u6708\u7dda\u4e0a\u63da(\u76ee\u524d11.00 > 1\u65e5\u524d10.00)\uff0c\u80a1\u50f912.00\u672a\u8dcc\u7834\u6708\u7dda11.00\uff1b\u7576\u65e5\u6700\u9ad8\u50f9\u89f8\u53ca\u5e03\u6797\u4e0a\u8ecc13.00\uff08\u58d3\u529b\u53c3\u8003\uff09",
+          "data_sufficient": true,
+          "upper_band_status": "touched",
+          "indicators": {
+            "mid": 11.0,
+            "upper": 13.0,
+            "slope": 1.0
+          },
+          "role": "premise"
+        }
+      ]
+    },
+    {
+      "date": "2026-01-08",
+      "state": "continued",
+      "isMet": true,
+      "premiseMet": true,
+      "entryTriggered": null,
+      "exitTriggered": null,
+      "conditions": [
+        {
+          "condition_id": "bollinger_mid_up",
+          "is_met": true,
+          "reason": "\u6708\u7dda\u4e0a\u63da(\u76ee\u524d13.00 > 1\u65e5\u524d11.00)\uff0c\u80a1\u50f914.00\u672a\u8dcc\u7834\u6708\u7dda13.00\uff1b\u7576\u65e5\u6700\u9ad8\u50f9\u89f8\u53ca\u5e03\u6797\u4e0a\u8ecc15.00\uff08\u58d3\u529b\u53c3\u8003\uff09",
+          "data_sufficient": true,
+          "upper_band_status": "touched",
+          "indicators": {
+            "mid": 13.0,
+            "upper": 15.0,
+            "slope": 2.0
+          },
+          "role": "premise"
+        }
+      ]
+    },
+    {
+      "date": "2026-01-09",
+      "state": "continued",
+      "isMet": true,
+      "premiseMet": true,
+      "entryTriggered": null,
+      "exitTriggered": null,
+      "conditions": [
+        {
+          "condition_id": "bollinger_mid_up",
+          "is_met": true,
+          "reason": "\u6708\u7dda\u4e0a\u63da(\u76ee\u524d15.00 > 1\u65e5\u524d13.00)\uff0c\u80a1\u50f916.00\u672a\u8dcc\u7834\u6708\u7dda15.00\uff1b\u7576\u65e5\u6700\u9ad8\u50f9\u89f8\u53ca\u5e03\u6797\u4e0a\u8ecc17.00\uff08\u58d3\u529b\u53c3\u8003\uff09",
+          "data_sufficient": true,
+          "upper_band_status": "touched",
+          "indicators": {
+            "mid": 15.0,
+            "upper": 17.0,
+            "slope": 2.0
+          },
+          "role": "premise"
+        }
+      ]
+    },
+    {
+      "date": "2026-01-10",
+      "state": "invalidated",
+      "isMet": false,
+      "premiseMet": false,
+      "entryTriggered": null,
+      "exitTriggered": null,
+      "conditions": [
+        {
+          "condition_id": "bollinger_mid_up",
+          "is_met": false,
+          "reason": "\u6708\u7dda(\u4e2d\u8ecc)\u4e0b\u5f4e\u4e2d\uff0c\u76ee\u524d12.00\u30011\u65e5\u524d15.00\uff0c\u975e\u504f\u591a\u683c\u5c40",
+          "data_sufficient": true,
+          "upper_band_status": null,
+          "indicators": {
+            "mid": 12.0,
+            "upper": 20.0,
+            "slope": -3.0
+          },
+          "role": "premise"
+        }
+      ]
+    },
+    {
+      "date": "2026-01-11",
+      "state": "not_met",
+      "isMet": false,
+      "premiseMet": false,
+      "entryTriggered": null,
+      "exitTriggered": null,
+      "conditions": [
+        {
+          "condition_id": "bollinger_mid_up",
+          "is_met": false,
+          "reason": "\u6708\u7dda(\u4e2d\u8ecc)\u4e0b\u5f4e\u4e2d\uff0c\u76ee\u524d7.00\u30011\u65e5\u524d12.00\uff0c\u975e\u504f\u591a\u683c\u5c40",
+          "data_sufficient": true,
+          "upper_band_status": null,
+          "indicators": {
+            "mid": 7.0,
+            "upper": 9.0,
+            "slope": -5.0
+          },
+          "role": "premise"
+        }
+      ]
+    },
+    {
+      "date": "2026-01-12",
+      "state": "reentered",
+      "isMet": true,
+      "premiseMet": true,
+      "entryTriggered": null,
+      "exitTriggered": null,
+      "conditions": [
+        {
+          "condition_id": "bollinger_mid_up",
+          "is_met": true,
+          "reason": "\u6708\u7dda\u4e0a\u63da(\u76ee\u524d8.00 > 1\u65e5\u524d7.00)\uff0c\u80a1\u50f910.00\u672a\u8dcc\u7834\u6708\u7dda8.00",
+          "data_sufficient": true,
+          "upper_band_status": null,
+          "indicators": {
+            "mid": 8.0,
+            "upper": 12.0,
+            "slope": 1.0
+          },
+          "role": "premise"
+        }
+      ]
+    },
+    {
+      "date": "2026-01-13",
+      "state": "continued",
+      "isMet": true,
+      "premiseMet": true,
+      "entryTriggered": null,
+      "exitTriggered": null,
+      "conditions": [
+        {
+          "condition_id": "bollinger_mid_up",
+          "is_met": true,
+          "reason": "\u6708\u7dda\u4e0a\u63da(\u76ee\u524d11.00 > 1\u65e5\u524d8.00)\uff0c\u80a1\u50f912.00\u672a\u8dcc\u7834\u6708\u7dda11.00\uff1b\u7576\u65e5\u6700\u9ad8\u50f9\u89f8\u53ca\u5e03\u6797\u4e0a\u8ecc13.00\uff08\u58d3\u529b\u53c3\u8003\uff09",
+          "data_sufficient": true,
+          "upper_band_status": "touched",
+          "indicators": {
+            "mid": 11.0,
+            "upper": 13.0,
+            "slope": 3.0
+          },
+          "role": "premise"
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "tradeCount": 1,
+    "winRate": 0.0,
+    "averageReturn": -0.46153846153846156,
+    "compoundReturn": -0.46153846153846156,
+    "maxDrawdown": 0.46153846153846156,
+    "profitFactor": 0.0,
+    "noLosses": false,
+    "insufficientSample": true
+  },
+  "skippedSessions": 0
+}

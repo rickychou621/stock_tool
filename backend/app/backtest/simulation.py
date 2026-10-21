@@ -7,6 +7,7 @@ from datetime import date
 from app.conditions.types import ConditionBar
 from app.market_data.price_adjustment import apply_adjustment
 from app.rules.evaluation import RuleEvaluationService
+from app.rules.frequency import is_evaluation_day
 
 
 def metrics(trades: list[dict]) -> dict:
@@ -73,6 +74,7 @@ def simulate(
     end: date,
     trading_dates: list[date],
 ) -> dict:
+    frequency = getattr(rule, "evaluation_frequency", "daily")
     # Suspended/invalid sessions cannot generate signals or execute an order.
     valid = [b for b in bars if b.trade_date <= end and usable(b)]
     if not valid:
@@ -135,6 +137,8 @@ def simulate(
                 trades.append(position)
                 position = None
             pending = None
+        if frequency == "weekly" and not is_evaluation_day(day, frequency):
+            continue
         evaluated = RuleEvaluationService.evaluate_bars(rule, ticker, prefix)
         if evaluated.status == "error":
             raise ValueError("；".join(c.reason for c in evaluated.condition_results))

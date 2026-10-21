@@ -24,6 +24,7 @@ def _to_schema(rule: WatchRule) -> WatchRuleSchema:
         name=rule.name,
         logic_operator=rule.logic_operator,
         is_enabled=rule.is_enabled,
+        evaluation_frequency=rule.evaluation_frequency,
         conditions=[
             WatchRuleConditionSchema(condition_id=c.condition_id, params=c.params, role=c.role)
             for c in sorted(rule.conditions, key=lambda c: c.sort_order)

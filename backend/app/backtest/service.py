@@ -43,6 +43,7 @@ def rule_snapshot(rule):
         id=rule.id,
         name=rule.name,
         logic_operator=rule.logic_operator,
+        evaluation_frequency=getattr(rule, "evaluation_frequency", None) or "daily",
         conditions=[
             dict(
                 condition_id=c.condition_id,
@@ -58,6 +59,7 @@ def rule_snapshot(rule):
 def restore_rule(snapshot):
     return SimpleNamespace(
         **{
+            "evaluation_frequency": "daily",
             **snapshot,
             "conditions": [
                 SimpleNamespace(**{"role": "premise", **c}) for c in snapshot["conditions"]

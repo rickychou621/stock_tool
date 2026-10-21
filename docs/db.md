@@ -94,6 +94,7 @@
 | `id` | INT PK | |
 | `name` | VARCHAR(100) | 規則名稱(使用者自訂,如「A+B組合監控」) |
 | `logic_operator` | VARCHAR(5) | `AND` / `OR` |
+| `evaluation_frequency` | VARCHAR(10) | `daily` / `weekly`，預設 `daily` |
 | `is_enabled` | BOOLEAN | 是否啟用 |
 | `created_at` / `updated_at` | DATETIME | |
 
@@ -315,3 +316,11 @@ SQL 先刪除 rule_id=1 的舊條件，再以 INSERT ... SELECT 寫入。watch_r
 進場要求月 KD 黃金交叉，且 DIF 與 MACD 訊號線都大於 0。出場採 OR：本月 KD 死亡交叉（prev_k ≥ prev_d 且 cur_k < cur_d），且 prev_k ≥ 70；或 DIF、MACD 訊號線任一小於 0。KD 預設 period=9；MACD 預設 short_period=12、long_period=26、signal_period=9。移除舊有 macd_histogram_rising，不再要求柱狀體上升。
 
 目錄使用 INSERT ... ON DUPLICATE KEY UPDATE；條件使用 DELETE + INSERT SELECT，可重複執行。watch_rules 沒有 id=2 時不新增戰法或其條件，不影響 rule_id=1 與 rule_id=3。
+
+## 判斷頻率 Migration 018
+
+[018_rule_frequency.sql](../mysql/init/018_rule_frequency.sql) 僅備妥檔案，尚未套用 DB。須在 C3b 完成後與 [017](../mysql/init/017_rule3_roles.sql) 一起套用。
+
+先檢查 information_schema，再新增 watch_rules.evaluation_frequency VARCHAR(10) NOT NULL DEFAULT 'daily'，可重複執行。只將 id=2 的戰法三設為 weekly；其餘既有戰法預設 daily，重跑不覆寫其他戰法的頻率。API 與 ORM 僅接受 daily、weekly。
+
+weekly 使用台北交易日期，只在週五判斷，採用當月截至該日的月 K；週五休市則整週跳過，週六補班不判斷。回測每日維護行情與除權息還原，判斷日收盤掛單後於下一個有效交易日開盤成交。全市場掃描與觀察清單的頻率控制留待 C3b。

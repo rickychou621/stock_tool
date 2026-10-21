@@ -18,6 +18,7 @@ class WatchRuleSchema(CamelModel):
     id: int
     name: str
     logic_operator: str
+    evaluation_frequency: Literal["daily", "weekly"] = "daily"
     is_enabled: bool
     conditions: list[WatchRuleConditionSchema]
 
@@ -25,6 +26,7 @@ class WatchRuleSchema(CamelModel):
 class WatchRuleCreateSchema(CamelModel):
     name: str
     logic_operator: str
+    evaluation_frequency: Literal["daily", "weekly"] = "daily"
     conditions: list[WatchRuleConditionSchema]
 
     @model_validator(mode="after")

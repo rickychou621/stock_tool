@@ -46,6 +46,7 @@ def test_create_legacy_default(client):
     ))
     assert response.status_code == 201
     assert response.json()["conditions"][0]["role"] == "premise"
+    assert response.json()["evaluationFrequency"] == "daily"
 
 
 @pytest.mark.parametrize("roles", [[], ["entry"], ["exit"], ["entry", "exit"], ["invalid"]])
@@ -56,3 +57,18 @@ def test_create_without_premise_or_invalid_role_returns_422(client, roles):
     ))
     assert response.status_code == 422
     assert client.get("/rules").json() == []
+
+
+@pytest.mark.parametrize("frequency", ["daily", "weekly", "monthly"])
+def test_frequency_create_and_read_back(client, frequency):
+    response = client.post("/rules", json=dict(
+        name="frequency", logicOperator="AND", evaluationFrequency=frequency,
+        conditions=[dict(conditionId="volume_spike", params={})],
+    ))
+    if frequency == "monthly":
+        assert response.status_code == 422
+        assert client.get("/rules").json() == []
+    else:
+        assert response.status_code == 201
+        assert response.json()["evaluationFrequency"] == frequency
+        assert client.get("/rules").json()[0]["evaluationFrequency"] == frequency
