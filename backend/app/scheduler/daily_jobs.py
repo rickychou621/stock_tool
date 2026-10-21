@@ -1,4 +1,4 @@
-"""Daily watchlist update, no notifications, retries or catch-up."""
+"""Daily watchlist update and Telegram summary, without retries or catch-up."""
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -8,21 +8,26 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.core.db import SessionLocal
+from app.data_source.notifier import TelegramNotifier
+from app.market_data.models import Stock
 from app.market_data.price_event_sync import sync_market_price_events
+from app.rules.models import WatchRule
 from app.scheduler.calendar import TwseCalendar
 from app.scheduler.coordination import coordinator_lock
 from app.scheduler.models import ScheduleError, ScheduleRun
 from app.scheduler.service import enabled_rule_ids, settings_row, utcnow
 from app.scheduler.worker import process_stock
-from app.watchlist.models import HoldingsWatchlist
+from app.watchlist.models import HoldingsWatchlist, WatchlistEvaluation
+from app.watchlist.notification import messages
 
 logger = logging.getLogger(__name__)
 TAIPEI = ZoneInfo("Asia/Taipei")
 
 
 def _run_daily_watchlist(
-    *, now=None, session_factory=SessionLocal, calendar=None, worker=process_stock
+    *, now=None, session_factory=SessionLocal, calendar=None, worker=process_stock, notifier=None
 ):
     now = (now or datetime.now(TAIPEI)).astimezone(TAIPEI)
     if (now.hour, now.minute) != (18, 0):
@@ -129,6 +134,7 @@ def _run_daily_watchlist(
                 else ("failed" if run.failed else "succeeded")
             )
             run.finished_at = utcnow()
+            failed = run.failed
             db.commit()
     except Exception as exc:
         logger.exception("Watchlist batch %s failed", batch)
@@ -142,12 +148,53 @@ def _run_daily_watchlist(
             )
             db.commit()
 
+        _send_notifications(
+            session_factory, batch, notifier,
+            [f"觀察清單排程失敗｜{day:%m/%d}｜{str(exc)[:120]}"],
+        )
+        return
+
+    # Query scalar columns in one join; never lazily load a rule or stock per holding.
+    with session_factory() as db:
+        evaluations = list(db.execute(
+            select(HoldingsWatchlist.ticker, Stock.name, WatchRule.name, WatchlistEvaluation.result)
+            .select_from(WatchlistEvaluation)
+            .join(HoldingsWatchlist, HoldingsWatchlist.id == WatchlistEvaluation.item_id)
+            .join(Stock, Stock.ticker == HoldingsWatchlist.ticker)
+            .join(WatchRule, WatchRule.id == WatchlistEvaluation.rule_id)
+            .where(
+                HoldingsWatchlist.is_active.is_(True),
+                HoldingsWatchlist.id.in_([item.id for item in items]),
+                WatchlistEvaluation.rule_id.in_(rule_ids),
+                # A failed stock keeps yesterday's result marked stale (data_version -1);
+                # never send an old stop price as today's. It is counted in failed instead.
+                WatchlistEvaluation.data_version == Stock.data_version,
+            )
+        ))
+    _send_notifications(session_factory, batch, notifier, messages(evaluations, failed=failed))
+
+
+def _send_notifications(session_factory, batch, notifier, texts):
+    for text in texts:
+        try:
+            sender = notifier if notifier is not None else TelegramNotifier(get_settings())
+            sender.send_alert(text)
+        except Exception as exc:
+            # Telegram URLs contain the token: persist only the exception class, never its text.
+            with session_factory() as db:
+                db.add(ScheduleError(
+                    batch_id=batch, ticker=None, occurred_at=utcnow(),
+                    reason=f"Telegram 觀察清單通知失敗（{type(exc).__name__}）",
+                ))
+                db.commit()
+
 
 def run_daily_watchlist(
-    *, now=None, session_factory=SessionLocal, calendar=None, worker=process_stock
+    *, now=None, session_factory=SessionLocal, calendar=None, worker=process_stock, notifier=None
 ):
     with coordinator_lock(session_factory) as acquired:
         if acquired:
             return _run_daily_watchlist(
-                now=now, session_factory=session_factory, calendar=calendar, worker=worker
+                now=now, session_factory=session_factory, calendar=calendar, worker=worker,
+                notifier=notifier
             )

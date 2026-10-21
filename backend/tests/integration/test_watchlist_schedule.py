@@ -97,12 +97,13 @@ def seed_saved(factory):
         db.commit()
 
 
-def run(factory, calendar=None, worker=None, now=NOW):
+def run(factory, calendar=None, worker=None, now=NOW, notifier=None):
     run_daily_watchlist(
         now=now,
         session_factory=factory,
         calendar=calendar or SimpleNamespace(is_trading_day=lambda day: True),
         worker=worker or (lambda *args: []),
+        notifier=notifier if notifier is not None else Mock(),
     )
 
 
@@ -464,6 +465,7 @@ def test_protective_stop_saved_for_both_evaluation_paths(factory, monkeypatch, p
             for rule_id in (1, 3)
         }
     expected[3]["protectiveStop"] = {
+        "close": 105.0,  # seed_bars adj_close
         "price": 104.85 if kind == "etf" else 103.5,
         "ma": 105.0, "tick": 0.05 if kind == "etf" else 0.5, "ticks": 3,
     }
@@ -500,3 +502,142 @@ def test_protective_stop_saved_for_both_evaluation_paths(factory, monkeypatch, p
     finally:
         event.remove(engine, "before_cursor_execute", record_query)
         app.dependency_overrides.clear()
+
+
+def seed_notification(factory):
+    seed_saved(factory)
+    with factory() as db:
+        for saved in db.scalars(select(WatchlistEvaluation)):
+            saved.result = {
+                "dataDate": "2026-10-12", "exitTriggered": False,
+                "protectiveStop": {
+                    "close": 296, "price": 277.5, "ma": 279.3, "tick": 0.5, "ticks": 3,
+                },
+                "conditionResults": [{
+                    "conditionId": "close_below_ma_days", "role": "exit", "isMet": False,
+                }],
+            }
+        db.commit()
+
+
+def test_daily_summary_queries_evaluations_once_and_sends_after_commit(factory):
+    from sqlalchemy import event
+
+    seed_notification(factory)
+    with factory() as db:
+        db.add(Stock(ticker="1303", name="南亞", market="上市"))
+        db.add(HoldingsWatchlist(id=2, ticker="1303"))
+        db.add(HoldingsWatchlist(id=3, ticker="9999", is_active=False))
+        template = db.scalar(select(WatchlistEvaluation)).result
+        for item_id in (2, 3):
+            db.add(WatchlistEvaluation(
+                item_id=item_id, rule_id=1, result=template, evaluated_at=utcnow(),
+                data_version=0, rule_fingerprint="test",
+            ))
+        db.add(Stock(ticker="9999", name="不顯示", market="上市"))
+        db.commit()
+    queries = []
+    engine = factory.kw["bind"]
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT") and "watchlist_evaluations" in statement:
+            queries.append(statement)
+
+    def sent(text):
+        with factory() as db:
+            assert db.get(ScheduleRun, 1).status == "partial_failure"
+        assert text == (
+            "觀察清單｜10/12 收盤｜2 檔\n【出場訊號】今日無\n【明日觸價價位】2 檔\n"
+            "1303 南亞｜觸價 277.5｜月線 279.3｜收 296\n"
+            "2330 台積電｜觸價 277.5｜月線 279.3｜收 296\n處理失敗 1 檔（見網頁）"
+        )
+
+    notifier = Mock(send_alert=Mock(side_effect=sent))
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        run(
+            factory, worker=lambda _, item, *args: ["failed"] if item == 2 else [],
+            notifier=notifier,
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    notifier.send_alert.assert_called_once()
+    assert len(queries) == 1
+    assert all(
+        name in queries[0]
+        for name in ("JOIN holdings_watchlist", "JOIN stocks", "JOIN watch_rules")
+    )
+    with factory() as db:
+        # A swallowed assertion in send_alert must fail here.
+        assert len(latest_run(db).errors) == 1
+
+
+def test_daily_summary_skips_stale_evaluations(factory):
+    seed_notification(factory)
+    with factory() as db:
+        db.add(Stock(ticker="1303", name="南亞", market="上市"))
+        db.add(HoldingsWatchlist(id=2, ticker="1303"))
+        template = db.scalar(select(WatchlistEvaluation)).result
+        # The real worker marks a failed stock's saved result stale with data_version -1.
+        db.add(WatchlistEvaluation(
+            item_id=2, rule_id=1, result=template, evaluated_at=utcnow(),
+            data_version=-1, rule_fingerprint="test",
+        ))
+        db.commit()
+    notifier = Mock()
+    run(factory, worker=lambda _, item, *args: ["failed"] if item == 2 else [], notifier=notifier)
+    text = notifier.send_alert.call_args.args[0]
+    assert "1303" not in text and "2330" in text and "處理失敗 1 檔" in text
+
+
+def test_batch_exception_only_sends_one_failure_message(factory, monkeypatch):
+    seed_notification(factory)
+    reason = "交易資料失敗" * 40
+    monkeypatch.setattr(
+        "app.scheduler.daily_jobs.sync_market_price_events", Mock(side_effect=RuntimeError(reason))
+    )
+    notifier = Mock()
+    run(factory, notifier=notifier)
+    notifier.send_alert.assert_called_once_with(f"觀察清單排程失敗｜10/12｜{reason[:120]}")
+    with factory() as db:
+        assert latest_run(db).status == "failed"
+
+
+@pytest.mark.parametrize("batch_failure", [False, True])
+def test_telegram_failure_keeps_status_and_hides_url(factory, monkeypatch, caplog, batch_failure):
+    seed_notification(factory)
+    if batch_failure:
+        monkeypatch.setattr(
+            "app.scheduler.daily_jobs.sync_market_price_events",
+            Mock(side_effect=RuntimeError("batch")),
+        )
+    notifier = Mock()
+    notifier.send_alert.side_effect = RuntimeError("https://api.telegram.org/botSECRET/sendMessage")
+    run(factory, notifier=notifier)
+    with factory() as db:
+        summary = latest_run(db)
+        assert summary.status == ("failed" if batch_failure else "succeeded")
+        errors = list(db.scalars(select(ScheduleError)))
+        notification_errors = [e for e in errors if e.reason.startswith("Telegram")]
+        assert len(notification_errors) == 1
+        error = notification_errors[0]
+        assert error.ticker is None
+        assert error.batch_id == summary.batch_id
+        assert error.reason == "Telegram 觀察清單通知失敗（RuntimeError）"
+        assert "SECRET" not in str([e.reason for e in errors]) + caplog.text
+
+
+def test_each_failed_page_records_error_and_continues(factory, monkeypatch):
+    monkeypatch.setattr(
+        "app.scheduler.daily_jobs.messages", lambda *a, **kw: ["one", "two", "three"]
+    )
+    notifier = Mock()
+    notifier.send_alert.side_effect = [RuntimeError("secret"), None, ValueError("secret")]
+    run(factory, notifier=notifier)
+    assert [call.args[0] for call in notifier.send_alert.call_args_list] == ["one", "two", "three"]
+    with factory() as db:
+        summary = latest_run(db)
+        assert summary.status == "succeeded"
+        assert {e.reason for e in summary.errors} == {
+            "Telegram 觀察清單通知失敗（RuntimeError）", "Telegram 觀察清單通知失敗（ValueError）",
+        }

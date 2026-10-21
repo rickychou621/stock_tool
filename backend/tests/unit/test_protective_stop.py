@@ -15,11 +15,11 @@ def test_stop_uses_exit_ma_even_when_exit_not_triggered(kind, price, tick):
     evaluated = result(
         ConditionEvaluation("ma_rising", True, "", indicators={"ma": 999}),
         ConditionEvaluation(
-            "close_below_ma_days", False, "", role="exit", indicators={"ma": 57.61}
+            "close_below_ma_days", False, "", role="exit", indicators={"ma": 57.61, "close": 58.0}
         ),
     )
     assert protective_stop(evaluated, kind) == {
-        "price": price, "ma": 57.61, "tick": tick, "ticks": 3,
+        "close": 58.0, "price": price, "ma": 57.61, "tick": tick, "ticks": 3,
     }
 
 
