@@ -112,7 +112,7 @@ export function WatchlistSchedule({ rules }: { rules: WatchRule[] | undefined })
               )}
           </fieldset>
           <p className="muted">
-            未選戰法時只更新最近一年行情。儲存後於下次排程生效，不發送 Telegram。
+            未選戰法時只更新最近一年行情。儲存後於下次排程生效；排程完成後以 Telegram 發送出場訊號與明日觸價價位。
           </p>
           <button
             className="button-primary"

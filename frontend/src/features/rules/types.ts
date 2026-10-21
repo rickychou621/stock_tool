@@ -22,6 +22,7 @@ export interface ConditionCatalogItem {
 }
 
 export interface ConditionEvaluation {
+  role?: 'premise' | 'entry' | 'exit'
   conditionId: string
   isMet: boolean
   reason: string
@@ -30,6 +31,16 @@ export interface ConditionEvaluation {
 }
 
 export interface RuleEvaluationResult {
+  premiseMet?: boolean
+  entryTriggered?: boolean | null
+  exitTriggered?: boolean | null
+  protectiveStop?: {
+    close: number | null
+    price: number
+    ma: number
+    tick: number
+    ticks: number
+  } | null
   ruleId: number
   ticker: string
   isMet: boolean

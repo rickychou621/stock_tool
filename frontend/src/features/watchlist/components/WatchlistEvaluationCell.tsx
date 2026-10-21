@@ -1,4 +1,5 @@
 import { outcome, OUTCOME_LABELS, type SavedEvaluation } from '../types'
+const ROLE_LABELS = { premise: '前提', entry: '進場', exit: '出場' }
 interface Props {
   results: SavedEvaluation[]
   expected: number
@@ -32,7 +33,7 @@ export function WatchlistEvaluationCell({
       <div className="evaluation-actions">
         <strong className={`evaluation-badge evaluation-badge--${busy ? 'pending' : status}`}>
           <span aria-hidden="true">
-            {busy ? '…' : status === 'matched' ? '✓' : status === 'not_met' ? '×' : '!'}
+            {busy ? '…' : status === 'exit' ? '↓' : status === 'matched' ? '✓' : status === 'not_met' ? '×' : '!'}
           </span>
           {busy ? '更新行情並評估中' : OUTCOME_LABELS[status]}
         </strong>
@@ -45,6 +46,30 @@ export function WatchlistEvaluationCell({
           {results.length ? '重新評估' : '評估'}
         </button>
       </div>
+      {!busy && !error && results.filter((r) => !r.stale).map((r) => {
+        const stop = r.result.protectiveStop
+        const exitReasons = r.result.exitTriggered === true
+          ? r.result.conditionResults.filter((c) => c.role === 'exit' && c.isMet)
+          : []
+        if (!stop && !exitReasons.length) return null
+        return (
+          <div className="stop-price-info" key={r.ruleId}>
+            {exitReasons.map((c, i) => (
+              <strong className="exit-reason" key={i}>
+                {r.ruleName} · 該出場：{c.reason}
+              </strong>
+            ))}
+            {stop && (
+              <span className="stop-price-mark">
+                {r.ruleName} · 觸價 {stop.price} · 月線 {Number(stop.ma.toFixed(1))} · 中軌下 {stop.ticks} tick
+                {stop.close !== null && stop.close < stop.price && (
+                  <> · <strong className="stop-price-mark--below">已低於觸價</strong></>
+                )}
+              </span>
+            )}
+          </div>
+        )
+      })}
       {!busy && !error && upperBandMarks.map((mark) => (
         <span className="upper-band-mark" key={mark}>
           {mark === 'breakout' ? '突破上軌' : '觸及上軌'} · 壓力參考
@@ -83,7 +108,7 @@ export function WatchlistEvaluationCell({
               </p>
               <ul>
                 {r.result.conditionResults.map((c, i) => (
-                  <li key={i}>{c.reason}</li>
+                  <li key={i}>{c.role ? `${ROLE_LABELS[c.role]}：` : ''}{c.reason}</li>
                 ))}
               </ul>
             </div>

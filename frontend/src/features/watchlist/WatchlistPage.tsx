@@ -71,8 +71,10 @@ export function WatchlistPage() {
       (sector === 'all' || (i.sector || '未分類') === sector) &&
       (filter === 'all' || statusFor(i) === filter),
   )
-  if (sort === 'passed')
-    visible.sort((a, b) => Number(statusFor(b) === 'matched') - Number(statusFor(a) === 'matched'))
+  if (sort === 'passed') {
+    const priority = (status: Outcome) => status === 'exit' ? 2 : status === 'matched' ? 1 : 0
+    visible.sort((a, b) => priority(statusFor(b)) - priority(statusFor(a)))
+  }
   if (sort === 'ticker') visible.sort((a, b) => a.ticker.localeCompare(b.ticker))
   async function evaluate(targets: WatchlistItem[]) {
     if (!ruleIds.length || client.getQueryData<Operation>(['watchlist-operation-v2'])?.busy) return

@@ -20,8 +20,10 @@ export interface SavedEvaluation {
   evaluatedAt: string
   stale: boolean
 }
-export type Outcome = 'matched' | 'not_met' | 'insufficient_data' | 'error' | 'pending' | 'stale'
+export type Outcome = 'exit' | 'matched' | 'not_met' | 'insufficient_data' | 'error' | 'pending' | 'stale'
 export function outcome(results: SavedEvaluation[], expected: number): Outcome {
+  // A fresh exit signal must not be hidden by another rule's stale result.
+  if (results.some((r) => !r.stale && r.result.exitTriggered === true)) return 'exit'
   if (results.some((r) => r.stale)) return 'stale'
   if (results.some((r) => r.result.status === 'matched')) return 'matched'
   if (results.some((r) => r.result.status === 'error')) return 'error'
@@ -30,6 +32,7 @@ export function outcome(results: SavedEvaluation[], expected: number): Outcome {
   return 'not_met'
 }
 export const OUTCOME_LABELS: Record<Outcome, string> = {
+  exit: '該出場',
   matched: '通過戰法',
   not_met: '未通過',
   insufficient_data: '資料不足',

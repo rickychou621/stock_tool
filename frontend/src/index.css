@@ -658,6 +658,30 @@ details li + li {
   background: #126e48;
   color: #fff;
 }
+.evaluation-badge--exit {
+  background: #7f1d1d;
+  color: #fff;
+}
+.stop-price-info {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.stop-price-mark,
+.exit-reason {
+  display: block;
+}
+.exit-reason,
+.stop-price-mark--below {
+  background: #7f1d1d;
+  color: #fff;
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+.evaluation-row--exit > td:first-child {
+  box-shadow: inset 5px 0 #7f1d1d;
+}
 .evaluation-badge--not_met {
   background: #ae354b;
   color: #fff;
@@ -748,6 +772,32 @@ details li + li {
 }
 .watchlist-table .evaluation-details[open] {
   max-width: 540px;
+}
+@media (max-width: 760px) {
+  .table-scroll:has(.watchlist-table)::before {
+    display: none;
+  }
+  .watchlist-table,
+  .watchlist-table tbody,
+  .watchlist-table tr,
+  .watchlist-table td,
+  .watchlist-table td:first-child,
+  .watchlist-table td:has(button) {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .watchlist-table thead {
+    display: none;
+  }
+  .watchlist-table .evaluation-cell {
+    min-width: 0;
+  }
+  .watchlist-table .evaluation-cell > * {
+    max-width: 100%;
+  }
 }
 .rule-result {
   padding: 12px 0;
