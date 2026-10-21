@@ -25,8 +25,9 @@ from app.watchlist.schemas import SavedEvaluationSchema
 def fingerprint(rule: WatchRule) -> str:
     definition = {
         "operator": rule.logic_operator,
+        "evaluation_frequency": getattr(rule, "evaluation_frequency", None) or "daily",
         "conditions": [
-            [c.condition_id, c.params, c.sort_order]
+            [c.condition_id, c.params, c.sort_order, getattr(c, "role", None) or "premise"]
             for c in sorted(rule.conditions, key=lambda c: c.sort_order)
         ],
     }

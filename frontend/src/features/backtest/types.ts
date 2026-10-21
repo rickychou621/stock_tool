@@ -31,6 +31,7 @@ export interface StockPerformance extends Performance {
   stockName: string
   stale: boolean
   needsRerun: boolean
+  rerunReason?: string
   costSnapshot: CostSnapshot | null
   warnings: string[]
   benchmarkReason: string | null
@@ -80,6 +81,7 @@ export interface Detail {
   batchId: string
   stale: boolean
   needsRerun: boolean
+  rerunReason?: string
   costSnapshot: CostSnapshot | null
   warnings: string[]
   benchmarkReason: string | null

@@ -83,8 +83,10 @@ def payload(ticker="1", rate=0.1):
     )
 
 
-def success(sessions, ticker, *args):
-    return [(1, "布林", payload(ticker))]
+def success(sessions, ticker, snapshots, *args):
+    result = payload(ticker)
+    result["definition"] = snapshots[0]
+    return [(1, "布林", result)]
 
 
 def make_manager(factory, worker=success):
@@ -150,7 +152,7 @@ def test_one_job_and_three_workers_independent_sessions(factory):
                 active -= 1
         if ticker == "2":
             raise RuntimeError("isolated error")
-        return [(1, "布林", payload(ticker))]
+        return success(sessions, ticker, *args)
 
     manager = make_manager(factory, worker)
     try:
@@ -383,3 +385,78 @@ def test_event_failure_visible_in_backtest_errors(factory, monkeypatch):
         errors = db.get(BacktestTask, 1).errors
         assert any("FinMind split" in e["reason"] for e in errors)
         assert "secret-token" not in str(errors)
+
+
+@pytest.mark.parametrize("change", ["missing", "role", "frequency", "same"])
+def test_definition_fingerprint_persisted_and_report_excludes_changed(factory, change):
+    from app.backtest.service import definition_fingerprint, rule_snapshot
+
+    manager = make_manager(factory)
+    manager.start([1], now=NOW)
+    manager.close()
+    with factory() as db:
+        rows = list(db.scalars(select(BacktestResult)))
+        rule = db.get(WatchRule, 1)
+        expected = definition_fingerprint(rule_snapshot(rule))
+        assert all(r.summary["definitionFingerprint"] == expected for r in rows)
+        if change == "missing":
+            for row in rows:
+                row.summary = {k: v for k, v in row.summary.items()
+                               if k != "definitionFingerprint"}
+        elif change == "role":
+            rule.conditions[0].role = "exit"
+        elif change == "frequency":
+            rule.evaluation_frequency = "weekly"
+        db.commit()
+    with factory() as db:
+        report = read_report(db)
+        assert all(s["needsRerun"] == (change != "same") for s in report["stocks"])
+        if change == "same":
+            assert report["overall"][0]["stockCount"] == 2
+            assert all("rerunReason" not in s for s in report["stocks"])
+        else:
+            assert report["overall"] == []
+            assert all(s["rerunReason"] == "戰法定義已變更，需重新回測"
+                       for s in report["stocks"])
+
+
+def test_report_rule_queries_do_not_grow_with_result_count(factory):
+    from sqlalchemy import event
+
+    manager = make_manager(factory)
+    manager.start([1], now=NOW)
+    manager.close()
+
+    def queries():
+        statements = []
+
+        def record(conn, cursor, statement, parameters, context, executemany):
+            if statement.lstrip().upper().startswith("SELECT"):
+                statements.append(statement)
+
+        engine = factory.kw["bind"]
+        event.listen(engine, "before_cursor_execute", record)
+        try:
+            with factory() as db:
+                read_report(db)
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+        assert not any("backtest_results.payload" in sql for sql in statements)
+        return len(statements)
+
+    before = queries()
+    with factory() as db:
+        task = db.get(BacktestTask, 1)
+        source = db.scalar(select(BacktestResult))
+        for rule_id in range(2, 12):
+            db.add(WatchRule(id=rule_id, name=str(rule_id), conditions=[
+                WatchRuleCondition(condition_id="ma_rising", params={"period": 20})
+            ]))
+            db.add(BacktestResult(
+                ticker="1", rule_id=rule_id, rule_name=str(rule_id), stock_name="Stock 1",
+                batch_id=task.batch_id, stale=False, calculated_at=source.calculated_at,
+                summary=copy.deepcopy(source.summary), payload=copy.deepcopy(source.payload),
+            ))
+        task.rule_ids = list(range(1, 12))
+        db.commit()
+    assert queries() == before

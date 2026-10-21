@@ -51,6 +51,9 @@ function TradeDetails({ stock, batch }: { stock: StockPerformance; batch: string
       ),
   })
   const data = detail.data
+  const needsRerun = stock.needsRerun || data?.needsRerun
+  const rerunReason = stock.rerunReason ?? data?.rerunReason
+    ?? '需重新回測：以下舊報酬只代表毛報酬。'
   return (
     <div className="card">
       <h2>
@@ -69,7 +72,7 @@ function TradeDetails({ stock, batch }: { stock: StockPerformance; batch: string
             成交價格統一還原至 {data.priceBasisDate}；共 {data.tradeTotal} 筆交易紀錄。
           </p>
           <CostInfo costs={data.costSnapshot} />
-          {data.needsRerun && <p className="backtest-warning">需重新回測：以下舊報酬只代表毛報酬。</p>}
+          {needsRerun && <p className="backtest-warning">{rerunReason}</p>}
           {data.warnings.map((w) => <p key={w} className="backtest-warning">{w}</p>)}
           {data.benchmarkReason && <p className="muted">{data.benchmarkReason}</p>}
           <div className="table-scroll">
@@ -111,10 +114,10 @@ function TradeDetails({ stock, batch }: { stock: StockPerformance; batch: string
                       {price(t.exitPrice)}
                     </td>
                     <td>{t.holdingDays ?? '—'}</td>
-                    <td>{data.needsRerun ? '需重新回測' : percent(t.netReturnRate)}
+                    <td>{needsRerun ? rerunReason : percent(t.netReturnRate)}
                       <small>毛 {percent(data.needsRerun ? t.returnRate : t.grossReturnRate)}</small></td>
                     <td>
-                      {data.needsRerun ? '需重新回測' : percent(t.netUnrealizedReturn)}
+                      {needsRerun ? rerunReason : percent(t.netUnrealizedReturn)}
                       <small>毛 {percent(data.needsRerun ? t.unrealizedReturn : t.grossUnrealizedReturn)}</small>
                       {t.valuationDate && <small>估值日 {t.valuationDate}</small>}
                     </td>
@@ -390,7 +393,7 @@ export function BacktestPage() {
                       <td>
                         {s.ticker} {s.stockName}
                         <small>{s.ruleName}</small>
-                        {s.needsRerun && <strong className="backtest-warning">需重新回測</strong>}
+                        {s.needsRerun && <strong className="backtest-warning">{s.rerunReason ?? '需重新回測：以下舊報酬只代表毛報酬。'}</strong>}
                         {s.stale && (
                           <strong className="backtest-warning">過期：上次成功結果</strong>
                         )}

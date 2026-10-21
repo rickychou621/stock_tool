@@ -1,4 +1,6 @@
 import copy
+import hashlib
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime, timedelta
@@ -54,6 +56,25 @@ def rule_snapshot(rule):
             for c in rule.conditions
         ],
     )
+
+
+def definition_fingerprint(snapshot) -> str:
+    definition = {
+        "logic_operator": snapshot["logic_operator"],
+        "evaluation_frequency": snapshot.get("evaluation_frequency") or "daily",
+        "conditions": [
+            {
+                "condition_id": c["condition_id"],
+                "params": c["params"],
+                "sort_order": c["sort_order"],
+                "role": c.get("role") or "premise",
+            }
+            for c in sorted(snapshot["conditions"], key=lambda c: c["sort_order"])
+        ],
+    }
+    return hashlib.sha256(
+        json.dumps(definition, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def restore_rule(snapshot):
@@ -291,6 +312,9 @@ class BacktestManager:
                                     for k, v in payload.items()
                                     if k not in ("signals", "definition")
                                 }
+                                row.summary["definitionFingerprint"] = definition_fingerprint(
+                                    payload["definition"]
+                                )
                                 row.summary["trades"] = [
                                     {
                                         k: t.get(k)
@@ -352,11 +376,23 @@ def read_report(db):
             )
         )
     )
+    current_fingerprints = {
+        rule.id: definition_fingerprint(rule_snapshot(rule))
+        for rule in db.scalars(
+            select(WatchRule)
+            .options(selectinload(WatchRule.conditions))
+            .where(WatchRule.id.in_({row.rule_id for row in rows}))
+        )
+    }
     stocks, grouped = [], {}
     for row in rows:
         stale = row.stale or row.batch_id != task.batch_id
         p = row.summary
         legacy = p.get("schemaVersion") != 2
+        definition_changed = (
+            not p.get("definitionFingerprint")
+            or p["definitionFingerprint"] != current_fingerprints.get(row.rule_id)
+        )
         stocks.append(
             dict(
                 id=row.id,
@@ -370,7 +406,12 @@ def read_report(db):
                 actualStart=p["actualStart"],
                 actualEnd=p["actualEnd"],
                 metrics=metrics([]) if legacy else p["metrics"],
-                needsRerun=legacy,
+                needsRerun=legacy or definition_changed,
+                **(
+                    {"rerunReason": "戰法定義已變更，需重新回測"}
+                    if definition_changed
+                    else {}
+                ),
                 grossMetrics=p.get("grossMetrics", p["metrics"]),
                 costSnapshot=p.get("costSnapshot"),
                 averageExcessReturn=p.get("averageExcessReturn"),
@@ -384,7 +425,7 @@ def read_report(db):
                 skippedSessions=p.get("skippedSessions", 0),
             )
         )
-        if not stale and not legacy:
+        if not stale and not legacy and not definition_changed:
             group = grouped.setdefault(
                 row.rule_id,
                 dict(
