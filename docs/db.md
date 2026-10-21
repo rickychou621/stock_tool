@@ -298,3 +298,20 @@ stock_price_event_sync 單列同步紀錄：
 月線上揚且股價回到月線時產生買進訊號。連續兩天收盤跌破月線時產生賣出訊號。回測皆於訊號後下一個有效交易日開盤成交。
 
 SQL 先刪除 rule_id=1 的舊條件，再以 INSERT ... SELECT 寫入。watch_rules 沒有 id=1 時不新增條件。其他戰法的條件保持原樣，包含戰法三的 bollinger_mid_up。
+
+## 戰法三 Migration 017
+
+[017_rule3_roles.sql](../mysql/init/017_rule3_roles.sql) 僅備妥檔案，尚未套用 DB。須待 C3 每週判斷完成後一起上線，並先具備 [014](../mysql/init/014_rule_condition_roles.sql) 的角色欄位。
+
+同一交易新增或更新兩個 condition_catalog 條件，required_timeframe='月K'、update_frequency='monthly'，再重建「戰法三：長波佈局」rule_id=2 的條件：
+
+| sort_order | condition_id | params | role |
+|---|---|---|---|
+| 0 | macd_positive | {} | premise |
+| 1 | kd_golden_cross | {} | entry |
+| 2 | kd_high_death_cross | period=9、threshold=70 | exit |
+| 3 | macd_negative_any | {} | exit |
+
+進場要求月 KD 黃金交叉，且 DIF 與 MACD 訊號線都大於 0。出場採 OR：本月 KD 死亡交叉（prev_k ≥ prev_d 且 cur_k < cur_d），且 prev_k ≥ 70；或 DIF、MACD 訊號線任一小於 0。KD 預設 period=9；MACD 預設 short_period=12、long_period=26、signal_period=9。移除舊有 macd_histogram_rising，不再要求柱狀體上升。
+
+目錄使用 INSERT ... ON DUPLICATE KEY UPDATE；條件使用 DELETE + INSERT SELECT，可重複執行。watch_rules 沒有 id=2 時不新增戰法或其條件，不影響 rule_id=1 與 rule_id=3。

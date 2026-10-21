@@ -94,3 +94,56 @@ class MacdHistogramRisingCondition(Condition):
         return ConditionResult(
             is_met, reason, indicators={"histogram": current, "previous": previous}
         )
+
+
+@register_condition
+class KdHighDeathCrossCondition(Condition):
+    id = "kd_high_death_cross"
+    name = "KD 高檔死亡交叉"
+    required_timeframe = "月K"
+    update_frequency = UpdateFrequency.MONTHLY
+
+    def evaluate(self, bars: list[ConditionBar], params: dict[str, Any]) -> ConditionResult:
+        period = int(params.get("period", 9))
+        threshold = float(params.get("threshold", 70))
+        monthly = resample_to_monthly(bars)
+        if len(monthly) < period + 1:
+            return ConditionResult(False, "月K資料不足，無法判斷", data_sufficient=False)
+
+        kd = calculate_kd(monthly, period)
+        (prev_k, prev_d), (cur_k, cur_d) = kd[-2], kd[-1]
+        is_met = prev_k >= prev_d and cur_k < cur_d and prev_k >= threshold
+        reason = (
+            f"月K 高檔死亡交叉（K {prev_k:.1f}→{cur_k:.1f}，D {cur_d:.1f}）"
+            if is_met
+            else f"月K 未出現高檔死亡交叉（K={cur_k:.1f}，D={cur_d:.1f}）"
+        )
+        return ConditionResult(
+            is_met, reason, indicators={"k": cur_k, "d": cur_d, "prev_k": prev_k}
+        )
+
+
+@register_condition
+class MacdNegativeAnyCondition(Condition):
+    id = "macd_negative_any"
+    name = "MACD 轉負"
+    required_timeframe = "月K"
+    update_frequency = UpdateFrequency.MONTHLY
+
+    def evaluate(self, bars: list[ConditionBar], params: dict[str, Any]) -> ConditionResult:
+        short_period = int(params.get("short_period", 12))
+        long_period = int(params.get("long_period", 26))
+        signal_period = int(params.get("signal_period", 9))
+        monthly = resample_to_monthly(bars)
+        if len(monthly) < long_period:
+            return ConditionResult(False, "月K資料不足，無法判斷", data_sufficient=False)
+
+        macd = calculate_macd(
+            [bar.close for bar in monthly], short_period, long_period, signal_period
+        )
+        dif, signal = macd[-1]
+        return ConditionResult(
+            dif < 0 or signal < 0,
+            f"月K DIF={dif:.2f}，MACD訊號線={signal:.2f}",
+            indicators={"dif": dif, "signal": signal},
+        )

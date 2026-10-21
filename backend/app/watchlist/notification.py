@@ -16,7 +16,11 @@ def _number(value, *, ma=False):
 
 def messages(items, *, failed=0) -> list[str]:
     rows = sorted(
-        (item for item in items if item[3].get("protectiveStop") is not None),
+        (
+            item for item in items
+            if item[3].get("exitTriggered") is True
+            or item[3].get("protectiveStop") is not None
+        ),
         key=lambda item: (item[0], item[2]),
     )
     if not rows:
@@ -33,15 +37,15 @@ def messages(items, *, failed=0) -> list[str]:
         if not is_exit:
             lines.append(f"【明日觸價價位】{len({row[0] for row in pending})} 檔")
         for ticker, name, rule_name, result in group:
-            stop = result["protectiveStop"]
+            stop = result.get("protectiveStop")
             conditions = result.get("conditionResults", [])
             # Saved condition results have no indicators; protectiveStop carries the close.
-            close = stop.get("close")
+            close = stop.get("close") if stop is not None else None
             parts = [f"{ticker} {name or ''}"]
             if is_exit:
-                parts.extend(
-                    [rule_name, f"收 {_number(close)}", f"月線 {_number(stop['ma'], ma=True)}"]
-                )
+                parts.append(rule_name)
+                if stop is not None:
+                    parts.extend([f"收 {_number(close)}", f"月線 {_number(stop['ma'], ma=True)}"])
                 parts.extend(
                     condition["reason"]
                     for condition in conditions

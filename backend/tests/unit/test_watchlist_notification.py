@@ -95,3 +95,42 @@ def test_close_below_stop_is_marked():
     assert "6274 台燿｜觸價 1580｜月線 1595｜收 1550｜已低於觸價" in text
     assert "1303 南亞｜觸價 277.5｜月線 279.3｜收 296\n" in text + "\n"
     assert "9999 相等｜觸價 100｜月線 101｜收 100" in text and "收 100｜已低於觸價" not in text
+
+
+def test_rule_three_exit_without_price():
+    evaluation = {
+        "exitTriggered": True,
+        "dataDate": "2026-10-20",
+        "protectiveStop": None,
+        "conditionResults": [
+            {"role": "premise", "isMet": True, "reason": "不要顯示"},
+            {"role": "exit", "isMet": False, "reason": "不要顯示"},
+            {"role": "exit", "isMet": True, "reason": "月K DIF=-1.20，MACD訊號線=0.30"},
+        ],
+    }
+    expected = [
+        "觀察清單｜10/20 收盤｜1 檔\n"
+        "【出場訊號】1 檔\n"
+        "2330 台積電｜戰法三：長波佈局｜月K DIF=-1.20，MACD訊號線=0.30\n"
+        "【明日觸價價位】0 檔"
+    ]
+    item = ("2330", "台積電", "戰法三：長波佈局", evaluation)
+    assert messages([item]) == expected
+    del evaluation["protectiveStop"]
+    assert messages([item]) == expected
+    evaluation["exitTriggered"] = False
+    assert messages([item]) == []
+
+
+def test_mixed_rules_count_tickers_separately_in_each_section():
+    no_price = result(exited=True)
+    no_price["protectiveStop"] = None
+    text = messages([
+        ("2330", "台積電", "戰法三", no_price),
+        ("2330", "台積電", "戰法二", result()),
+        ("2330", "台積電", "另一出場戰法", result(exited=True)),
+    ])[0]
+    assert text.startswith("觀察清單｜10/20 收盤｜1 檔")
+    assert "【出場訊號】1 檔" in text
+    assert "【明日觸價價位】1 檔" in text
+    assert text.count("2330 台積電") == 3
