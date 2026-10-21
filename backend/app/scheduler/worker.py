@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.market_data.models import Stock
 from app.market_data.repository import MarketDataRepository
 from app.market_data.service import MarketDataService
+from app.market_scan.models import MarketInstrument
 from app.rules.evaluation import RuleEvaluationService
 from app.rules.models import WatchRule
 from app.rules.preparation import history_days
@@ -17,6 +18,7 @@ from app.rules.schemas import RuleEvaluationSchema
 from app.scheduler.service import utcnow
 from app.watchlist.evaluation import fingerprint
 from app.watchlist.models import HoldingsWatchlist, WatchlistEvaluation
+from app.watchlist.protective_stop import protective_stop
 
 
 def validate_bars(bars, day: date):
@@ -80,6 +82,10 @@ def process_stock(session_factory, item_id: int, ticker: str, rule_ids: list[int
             db.rollback()
             invalidate(db, item_id, rule_ids)
             return failures + [f"行情更新／驗證失敗：{exc}"]
+        kind = db.scalar(
+            select(MarketInstrument.kind).where(MarketInstrument.ticker == ticker)
+        ) or "stock"
+        version = stock.data_version
         for rule in available:
             try:
                 result = RuleEvaluationService(db).evaluate(rule, ticker)
@@ -96,10 +102,10 @@ def process_stock(session_factory, item_id: int, ticker: str, rule_ids: list[int
                 if saved is None:
                     saved = WatchlistEvaluation(item_id=item_id, rule_id=rule.id)
                     db.add(saved)
-                saved.result = RuleEvaluationSchema(**asdict(result)).model_dump(
-                    mode="json", by_alias=True
-                )
-                saved.data_version = stock.data_version
+                saved.result = RuleEvaluationSchema(
+                    **asdict(result), protective_stop=protective_stop(result, kind)
+                ).model_dump(mode="json", by_alias=True)
+                saved.data_version = version
                 saved.rule_fingerprint = fingerprint(rule)
                 saved.evaluated_at = utcnow()
                 db.commit()

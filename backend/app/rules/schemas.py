@@ -54,3 +54,4 @@ class RuleEvaluationSchema(CamelModel):
     status: str
     data_date: date | None
     condition_results: list[ConditionEvaluationSchema]
+    protective_stop: dict | None = None

@@ -429,3 +429,74 @@ def test_event_failure_visible_in_schedule_errors(factory, monkeypatch):
         errors = list(db.scalars(select(ScheduleError.reason)))
         assert any("FinMind split" in e for e in errors)
         assert "secret-token" not in str(errors)
+
+
+@pytest.mark.parametrize("path", ["manual", "scheduled"])
+@pytest.mark.parametrize("kind", [None, "unknown", "stock", "etf"])
+def test_protective_stop_saved_for_both_evaluation_paths(factory, monkeypatch, path, kind):
+    from dataclasses import asdict
+
+    from sqlalchemy import event
+
+    from app.market_scan.models import MarketInstrument
+    from app.rules.evaluation import RuleEvaluationService
+    from app.rules.schemas import RuleEvaluationSchema
+
+    seed_bars(factory)
+    monkeypatch.setattr(MarketDataService, "sync_daily_prices", Mock(return_value=25))
+    with factory() as db:
+        if kind is not None:
+            db.add(MarketInstrument(ticker="2330", kind=kind, listed_on=DAY))
+        db.add(WatchRule(
+            id=3, name="月線出場", is_enabled=True, logic_operator="AND",
+            conditions=[
+                WatchRuleCondition(condition_id="volume_spike", params={}, sort_order=0),
+                WatchRuleCondition(
+                    condition_id="close_below_ma_days", params={}, role="exit", sort_order=1,
+                ),
+            ],
+        ))
+        db.commit()
+        expected = {
+            rule_id: RuleEvaluationSchema(**asdict(
+                RuleEvaluationService(db).evaluate(db.get(WatchRule, rule_id), "2330")
+            )).model_dump(mode="json", by_alias=True)
+            for rule_id in (1, 3)
+        }
+    expected[3]["protectiveStop"] = {
+        "price": 104.85 if kind == "etf" else 103.5,
+        "ma": 105.0, "tick": 0.05 if kind == "etf" else 0.5, "ticks": 3,
+    }
+    queries = []
+    engine = factory.kw["bind"]
+
+    def record_query(conn, cursor, statement, parameters, context, executemany):
+        if "market_scan_instruments" in statement:
+            queries.append(statement)
+
+    def dependency():
+        with factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = dependency
+    event.listen(engine, "before_cursor_execute", record_query)
+    try:
+        with TestClient(app) as client:
+            if path == "manual":
+                response = client.post("/watchlist/1/evaluate", json={"ruleIds": [1, 3]})
+                assert response.status_code == 200
+                assert {row["ruleId"]: row["result"] for row in response.json()} == expected
+            else:
+                assert process_stock(factory, 1, "2330", [1, 3], DAY) == []
+            response = client.get("/watchlist/evaluations")
+            assert response.status_code == 200
+            assert {row["ruleId"]: row["result"] for row in response.json()} == expected
+        assert len(queries) == 1  # One kind lookup for the ticker, across both rules.
+        with factory() as db:
+            assert {
+                row.rule_id: row.result for row in db.scalars(select(WatchlistEvaluation))
+            } == expected
+        assert expected[1]["protectiveStop"] is None
+    finally:
+        event.remove(engine, "before_cursor_execute", record_query)
+        app.dependency_overrides.clear()

@@ -10,11 +10,13 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.market_data.models import Stock
 from app.market_data.service import MarketDataService
+from app.market_scan.models import MarketInstrument
 from app.rules.evaluation import RuleEvaluationService
 from app.rules.models import WatchRule
 from app.rules.preparation import PreparationError, history_days
 from app.rules.schemas import RuleEvaluationSchema
 from app.watchlist.models import HoldingsWatchlist, WatchlistEvaluation
+from app.watchlist.protective_stop import protective_stop
 from app.watchlist.schemas import SavedEvaluationSchema
 
 
@@ -85,12 +87,18 @@ class WatchlistEvaluationService:
         version = stock.data_version
         output = []
         engine = RuleEvaluationService(self._db)
+        kind = self._db.scalar(
+            select(MarketInstrument.kind).where(MarketInstrument.ticker == item.ticker)
+        ) or "stock"
         for rule in rules:
             result = None
             failure = error
             if failure is None:
                 try:
-                    result = RuleEvaluationSchema(**asdict(engine.evaluate(rule, item.ticker)))
+                    evaluated = engine.evaluate(rule, item.ticker)
+                    result = RuleEvaluationSchema(
+                        **asdict(evaluated), protective_stop=protective_stop(evaluated, kind)
+                    )
                 except (ValueError, TypeError, ArithmeticError, KeyError):
                     failure = "評估失敗，請檢查戰法設定後重試。"
             if result is None:
