@@ -44,8 +44,12 @@ class RuleEvaluationService:
     def __init__(self, db: Session) -> None:
         self._market_data_repository = MarketDataRepository(db)
 
-    def evaluate(self, rule: WatchRule, ticker: str) -> RuleEvaluationResult:
+    def evaluate(
+        self, rule: WatchRule, ticker: str, *, cutoff: date | None = None
+    ) -> RuleEvaluationResult:
         bars = load_condition_bars(self._market_data_repository, ticker)
+        if cutoff is not None:
+            bars = [bar for bar in bars if bar.trade_date <= cutoff]
         return self.evaluate_bars(rule, ticker, bars)
 
     @staticmethod
@@ -113,3 +117,19 @@ class RuleEvaluationService:
             status=status,
             data_date=bars[-1].trade_date if bars else None,
         )
+
+
+def missing_friday_result(rule: WatchRule, ticker: str) -> RuleEvaluationResult:
+    return RuleEvaluationResult(
+        rule_id=rule.id,
+        ticker=ticker,
+        is_met=False,
+        logic_operator=rule.logic_operator,
+        condition_results=[
+            ConditionEvaluation("evaluation", False, "尚無週五判斷資料", data_sufficient=False)
+        ],
+        premise_met=False,
+        entry_triggered=None,
+        exit_triggered=None,
+        status="insufficient_data",
+    )

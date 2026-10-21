@@ -732,3 +732,63 @@ def test_schedule_error_reason_is_bounded_after_save(factory, length):
         else:
             assert len(saved.reason) <= 2000
             assert saved.reason == "錯" * 1990 + "…（已截斷）"
+
+
+@pytest.mark.parametrize("path", ["manual", "scheduled"])
+@pytest.mark.parametrize("frequency", ["daily", "weekly"])
+@pytest.mark.parametrize("no_friday", [False, True])
+def test_frequency_cutoff_saved_by_both_paths(factory, monkeypatch, path, frequency, no_friday):
+    from dataclasses import asdict
+
+    from app.market_data.repository import MarketDataRepository
+    from app.rules.evaluation import RuleEvaluationService
+    from app.rules.schemas import RuleEvaluationSchema
+    from app.watchlist.evaluation import WatchlistEvaluationService
+
+    wednesday = date(2026, 10, 21)
+    friday = date(2026, 10, 16)
+    if no_friday:
+        seed_saved(factory)
+    seed_bars(factory, count=3 if no_friday else 35, latest=wednesday)
+    monkeypatch.setattr(MarketDataService, "sync_daily_prices", Mock(return_value=35))
+    with factory() as db:
+        rule = db.get(WatchRule, 1)
+        rule.evaluation_frequency = frequency
+        rule.conditions[0].params = {"lookback": 1, "multiplier": 2}
+        # Make the latest Wednesday disagree with Friday.
+        data = MarketDataRepository(db).get_all_bars("2330")
+        data[-1].volume = 10000
+        db.commit()
+        if not no_friday or frequency == "daily":
+            prefix = data if frequency == "daily" else [b for b in data if b.trade_date <= friday]
+            from app.conditions.types import ConditionBar
+
+            expected = RuleEvaluationService.evaluate_bars(rule, "2330", [
+                ConditionBar(b.trade_date, float(b.adj_open), float(b.adj_high),
+                             float(b.adj_low), float(b.adj_close), b.volume)
+                for b in prefix
+            ])
+            expected = RuleEvaluationSchema(**asdict(expected)).model_dump(
+                mode="json", by_alias=True
+            )
+        else:
+            monkeypatch.setattr(
+                RuleEvaluationService, "evaluate",
+                lambda *a, **kw: pytest.fail("No Friday must not evaluate the rule"),
+            )
+        if path == "manual":
+            WatchlistEvaluationService(db).evaluate(db.get(HoldingsWatchlist, 1), [1])
+    if path == "scheduled":
+        assert process_stock(factory, 1, "2330", [1], wednesday) == []
+    with factory() as db:
+        saved = db.scalar(select(WatchlistEvaluation).where(WatchlistEvaluation.rule_id == 1))
+        if no_friday and frequency == "weekly":
+            assert saved.result["status"] == "insufficient_data"
+            assert saved.result["dataDate"] is None
+            assert saved.result["conditionResults"][0]["reason"] == "尚無週五判斷資料"
+            assert saved.data_version == db.scalar(select(Stock)).data_version
+        else:
+            assert saved.result == expected
+            assert saved.result["dataDate"] == (
+                wednesday if frequency == "daily" else friday
+            ).isoformat()

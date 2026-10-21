@@ -10,6 +10,7 @@ from app.market_data.validation import is_no_trade, valid_ohlcv
 from app.market_scan.data import prepare, required_days
 from app.market_scan.models import DividendCoverage
 from app.rules.evaluation import RuleEvaluationService
+from app.rules.frequency import is_evaluation_day, last_evaluation_day
 
 SUSPENDED_AFTER = 20
 
@@ -89,6 +90,10 @@ def evaluate_stock(ticker, name, instrument_kind, rules, bars, dates):
         for b in valid
     ]
     for rule in rules:
+        weekly = getattr(rule, "evaluation_frequency", "daily") == "weekly"
+        if weekly and not is_evaluation_day(dates[-1], "weekly"):
+            outcome.rules[rule.id] = ("normal", None)
+            continue
         try:
             cutoff = latest.trade_date - timedelta(days=required_days([rule]))
             invalid_for_rule = [b for b in invalid_history if b.trade_date >= cutoff]
@@ -112,7 +117,18 @@ def evaluate_stock(ticker, name, instrument_kind, rules, bars, dates):
                 if result.entry_triggered is not None and result.premise_met:
                     outcome.continuing += 1
                 continue
-            previous = RuleEvaluationService.evaluate_bars(rule, ticker, engine_bars[:-1])
+            previous_bars = engine_bars[:-1]
+            if weekly:
+                prev_day = (
+                    last_evaluation_day(dates[-2], dates, "weekly") if len(dates) > 1 else None
+                )
+                if prev_day is None:
+                    reason = "前一個有效交易日資料不足：尚無週五判斷資料"
+                    outcome.rules[rule.id] = ("insufficient_history", reason)
+                    outcome.errors.append((rule.id, "insufficient_history", reason))
+                    continue
+                previous_bars = [b for b in engine_bars if b.trade_date <= prev_day]
+            previous = RuleEvaluationService.evaluate_bars(rule, ticker, previous_bars)
             if previous.status == "error":
                 raise ValueError(
                     "前一個有效交易日戰法評估失敗："

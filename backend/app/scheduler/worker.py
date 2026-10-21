@@ -12,7 +12,8 @@ from app.market_data.repository import MarketDataRepository
 from app.market_data.service import MarketDataService
 from app.market_data.validation import is_no_trade
 from app.market_scan.models import MarketInstrument
-from app.rules.evaluation import RuleEvaluationService
+from app.rules.evaluation import RuleEvaluationService, missing_friday_result
+from app.rules.frequency import last_evaluation_day
 from app.rules.models import WatchRule
 from app.rules.preparation import history_days
 from app.rules.schemas import RuleEvaluationSchema
@@ -77,7 +78,8 @@ def process_stock(session_factory, item_id: int, ticker: str, rule_ids: list[int
                 raise ValueError("觀察清單項目已移除")
             if MarketDataService(db).sync_daily_prices(ticker, days=days) == 0:
                 raise ValueError("FinMind 未回傳行情")
-            validate_bars(MarketDataRepository(db).get_all_bars(ticker), day)
+            bars = MarketDataRepository(db).get_all_bars(ticker)
+            validate_bars(bars, day)
             stock = db.scalar(select(Stock).where(Stock.ticker == ticker))
             if stock is None:
                 raise ValueError("找不到股票主檔")
@@ -89,11 +91,23 @@ def process_stock(session_factory, item_id: int, ticker: str, rule_ids: list[int
             select(MarketInstrument.kind).where(MarketInstrument.ticker == ticker)
         ) or "stock"
         version = stock.data_version
+        weekly_cutoff = last_evaluation_day(
+            bars[-1].trade_date, [b.trade_date for b in bars], "weekly"
+        )
         for rule in available:
             try:
-                result = RuleEvaluationService(db).evaluate(rule, ticker)
-                if result.status in ("error", "insufficient_data") or any(
-                    not condition.data_sufficient for condition in result.condition_results
+                missing_friday = rule.evaluation_frequency == "weekly" and weekly_cutoff is None
+                if rule.evaluation_frequency == "weekly":
+                    result = (
+                        missing_friday_result(rule, ticker)
+                        if missing_friday
+                        else RuleEvaluationService(db).evaluate(rule, ticker, cutoff=weekly_cutoff)
+                    )
+                else:
+                    result = RuleEvaluationService(db).evaluate(rule, ticker)
+                if not missing_friday and (
+                    result.status in ("error", "insufficient_data")
+                    or any(not c.data_sufficient for c in result.condition_results)
                 ):
                     raise ValueError("；".join(c.reason for c in result.condition_results))
                 saved = db.scalar(

@@ -1205,3 +1205,69 @@ def test_chosen_rules_keeps_condition_roles(factory):
         db.commit()
         snapshot = chosen_rules(db, [1])[0]
     assert [c.role for c in snapshot.conditions] == ["premise", "entry", "exit"]
+
+
+@pytest.mark.parametrize("holiday", [False, True])
+@pytest.mark.parametrize("previous_triggered", [False, True])
+def test_weekly_scan_compares_previous_friday(holiday, previous_triggered):
+    days = [
+        date(2026, 1, 1) + timedelta(days=i) for i in range(23)
+        if (date(2026, 1, 1) + timedelta(days=i)).weekday() < 5
+        and not (holiday and i == 15)
+    ]
+    strategy = NS(
+        id=1, name="weekly", logic_operator="AND", evaluation_frequency="weekly",
+        conditions=[
+            NS(condition_id="ma_rising", role="premise",
+               params={"period": 2, "slope_lookback": 1}, sort_order=0),
+            NS(condition_id="volume_spike", role="entry",
+               params={"lookback": 1, "multiplier": 2}, sort_order=1),
+        ],
+    )
+    sample = bars(days=days, volume=100)
+    prev_day = date(2026, 1, 9 if holiday else 16)
+    for bar in sample:
+        if bar.trade_date == days[-1] or (bar.trade_date == prev_day and previous_triggered):
+            bar.volume = 1000
+    # Thursday's opposite signal distinguishes weekly from daily comparison.
+    sample[-2].volume = 100 if previous_triggered else 300
+    outcome = evaluate_stock("1", "股票", "stock", [strategy], sample, days)
+    assert outcome.rules == {1: ("normal", None)}
+    assert len(outcome.candidates) == (0 if previous_triggered else 1)
+    assert outcome.continuing == int(previous_triggered)
+
+
+def test_weekly_scan_thursday_does_not_evaluate(monkeypatch):
+    from app.rules.evaluation import RuleEvaluationService
+
+    strategy = entry_role_rule()
+    strategy.evaluation_frequency = "weekly"
+    days = [date(2026, 1, 22)]
+    monkeypatch.setattr(
+        RuleEvaluationService, "evaluate_bars",
+        lambda *args: pytest.fail("Thursday must skip weekly evaluation"),
+    )
+    outcome = evaluate_stock("1", "股票", "stock", [strategy], bars(days=days), days)
+    assert outcome.rules == {1: ("normal", None)}
+    assert outcome.candidates == []
+    assert outcome.continuing == 0
+
+
+@pytest.mark.parametrize("start", [5, 9])
+def test_weekly_scan_without_sufficient_previous_friday(start):
+    days = [date(2026, 1, d) for d in range(start, 17) if date(2026, 1, d).weekday() < 5]
+    # With Jan 9 removed there is no prior Friday; with it first there is no warmup.
+    if start == 5:
+        days.remove(date(2026, 1, 9))
+    strategy = NS(
+        id=1, name="weekly", logic_operator="AND", evaluation_frequency="weekly",
+        conditions=[
+            NS(condition_id="ma_rising", role=role,
+               params={"period": 2, "slope_lookback": 1}, sort_order=i)
+            for i, role in enumerate(["premise", "entry"])
+        ],
+    )
+    outcome = evaluate_stock("1", "股票", "stock", [strategy], bars(days=days), days)
+    assert outcome.rules[1][0] == "insufficient_history"
+    assert outcome.candidates == []
+    assert outcome.continuing == 0

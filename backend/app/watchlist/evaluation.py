@@ -9,9 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.market_data.models import Stock
+from app.market_data.repository import MarketDataRepository
 from app.market_data.service import MarketDataService
 from app.market_scan.models import MarketInstrument
-from app.rules.evaluation import RuleEvaluationService
+from app.rules.evaluation import RuleEvaluationService, missing_friday_result
+from app.rules.frequency import last_evaluation_day
 from app.rules.models import WatchRule
 from app.rules.preparation import PreparationError, history_days
 from app.rules.schemas import RuleEvaluationSchema
@@ -90,12 +92,26 @@ class WatchlistEvaluationService:
         kind = self._db.scalar(
             select(MarketInstrument.kind).where(MarketInstrument.ticker == item.ticker)
         ) or "stock"
+        weekly_cutoff = None
+        if error is None and any(rule.evaluation_frequency == "weekly" for rule in rules):
+            bars = MarketDataRepository(self._db).get_all_bars(item.ticker)
+            if bars:
+                weekly_cutoff = last_evaluation_day(
+                    bars[-1].trade_date, [b.trade_date for b in bars], "weekly"
+                )
         for rule in rules:
             result = None
             failure = error
             if failure is None:
                 try:
-                    evaluated = engine.evaluate(rule, item.ticker)
+                    if rule.evaluation_frequency == "weekly":
+                        evaluated = (
+                            engine.evaluate(rule, item.ticker, cutoff=weekly_cutoff)
+                            if weekly_cutoff is not None
+                            else missing_friday_result(rule, item.ticker)
+                        )
+                    else:
+                        evaluated = engine.evaluate(rule, item.ticker)
                     result = RuleEvaluationSchema(
                         **asdict(evaluated), protective_stop=protective_stop(evaluated, kind)
                     )
