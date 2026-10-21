@@ -467,7 +467,7 @@ def test_protective_stop_saved_for_both_evaluation_paths(factory, monkeypatch, p
     expected[3]["protectiveStop"] = {
         "close": 105.0,  # seed_bars adj_close
         "price": 104.85 if kind == "etf" else 103.5,
-        "ma": 105.0, "tick": 0.05 if kind == "etf" else 0.5, "ticks": 3,
+        "ma": 105.0, "buffer": 0.0, "tick": 0.05 if kind == "etf" else 0.5, "ticks": 3,
     }
     queries = []
     engine = factory.kw["bind"]

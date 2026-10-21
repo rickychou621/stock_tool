@@ -61,7 +61,9 @@ export function WatchlistEvaluationCell({
             ))}
             {stop && (
               <span className="stop-price-mark">
-                {r.ruleName} · 觸價 {stop.price} · 月線 {Number(stop.ma.toFixed(1))} · 中軌下 {stop.ticks} tick
+                {r.ruleName} · 觸價 {stop.price} · 月線 {Number(stop.ma.toFixed(1))} · {stop.buffer !== undefined && stop.buffer > 0
+                  ? `月線下 ${stop.buffer * 100}% 再下 ${stop.ticks} tick`
+                  : `中軌下 ${stop.ticks} tick`}
                 {stop.close !== null && stop.close < stop.price && (
                   <> · <strong className="stop-price-mark--below">已低於觸價</strong></>
                 )}

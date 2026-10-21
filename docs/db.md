@@ -332,3 +332,17 @@ weekly 使用台北交易日期，只在週五判斷，採用當月截至該日�
 預設 period=20、tolerance=0.01。前一根最低價 ≤ 前一根 MA × 1.01 且收盤 ≥ 前一根 MA；今日收盤 > 前一根收盤且 ≥ 今日 MA。至少需要 period + 1 根日 K，各日使用自己的收盤簡單移動平均。
 
 研究工具另支援 close_below_ma_days.buffer，預設 0，以及 ma_rising.min_slope_pct，預設 None；預設判斷維持現行行為。參數存於 JSON，不需另做 migration。
+
+## 戰法二 A1＋B Migration 020
+
+[020_rule2_a1b.sql](../mysql/init/020_rule2_a1b.sql) 僅備妥檔案，尚未套用 DB。須先套用 [019](../mysql/init/019_ma_touch_rebound.sql)，並具備 014 的角色欄位與 015 的條件目錄。
+
+| sort_order | condition_id | params | role |
+|---|---|---|---|
+| 0 | ma_rising | period=20、slope_lookback=5 | premise |
+| 1 | ma_touch_rebound | period=20、tolerance=0.01 | entry |
+| 2 | close_below_ma_days | period=20、days=2、buffer=0.02 | exit |
+
+月線上揚且回到月線後隔天轉強時產生進場訊號；連續 2 天收盤各自低於當日月線 × 0.98 時產生出場訊號。回測於訊號後下一個有效交易日開盤成交。觀察清單觸價保護價以月線 × 0.98 為基準，再依商品 tick 級距往下 3 tick。
+
+SQL 以單一交易刪除並重建 rule_id=1 的條件，可重複執行；watch_rules 沒有 id=1 時不新增，不影響 rule_id=2／3。舊戰法二訊號歷史由審查方另外清除，此 migration 不刪除歷史。

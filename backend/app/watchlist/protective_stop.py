@@ -14,13 +14,16 @@ def protective_stop(result: RuleEvaluationResult, kind: str, ticks: int = 3) -> 
         if value is None:
             continue
         ma = Decimal(str(value))
+        buffer = Decimal(str(condition.indicators.get("buffer", 0)))
+        base = ma * (Decimal("1") - buffer)
         close = condition.indicators.get("close")
         return {
             # Saved evaluations do not keep condition indicators, so carry the close here.
             "close": float(close) if close is not None else None,
-            "price": float(ticks_below(ma, ticks, kind)),
+            "price": float(ticks_below(base, ticks, kind)),
             "ma": float(ma),
-            "tick": float(tick_size(ma, kind)),
+            "buffer": float(buffer),
+            "tick": float(tick_size(base, kind)),
             "ticks": ticks,
         }
     return None

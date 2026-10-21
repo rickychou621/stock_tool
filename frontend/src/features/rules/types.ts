@@ -39,6 +39,7 @@ export interface RuleEvaluationResult {
     price: number
     ma: number
     tick: number
+    buffer?: number
     ticks: number
   } | null
   ruleId: number
