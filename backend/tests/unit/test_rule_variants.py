@@ -951,3 +951,183 @@ def test_tuning_condition_definitions_and_order():
                          {"period": 20, "tolerance": 0.01}, "entry")
         assert exit == ("close_below_ma_days", {"period": 20, "days": 3 if i == 2 else 2,
                          **({"buffer": 0.02} if i in (1, 5, 6, 8) else {})}, "exit")
+
+
+@pytest.mark.parametrize("roles", [False, True])
+def test_role_replay_matches_engine_with_suspensions(roles):
+    from app.backtest.service import restore_rule
+    from app.conditions.types import ConditionBar
+    from app.research.rule_variants import role_trades
+
+    values = [100] * 25 + [110, 115, 120, 110, 90, 80, 85, 105, 115, 120, 90, 80, 100] * 3
+    dates = [date(2026, 1, 1) + timedelta(days=i) for i in range(len(values))]
+    raw = [ConditionBar(d, v, v + 1, v - 15, v, volume=0 if i in (27, 35) else 100)
+           for i, (d, v) in enumerate(zip(dates, values, strict=True))]
+    current = rule()
+    if roles:
+        current = restore_rule(dict(id=1, name="roles", logic_operator="AND", conditions=[
+            dict(condition_id=c, params=p, role=r, sort_order=i)
+            for i, (c, p, r) in enumerate([
+                ("ma_rising", {"period": 2, "slope_lookback": 1}, "premise"),
+                ("price_touch_ma", {"period": 2}, "entry"),
+                ("close_below_ma_days", {"period": 2, "days": 2}, "exit"),
+            ])]))
+    payload = simulate(current, "T", raw, [], dates[25], dates[-1], dates)
+    prices = {str(b.trade_date): b for b in adjusted_bars([b for b in raw if usable(b)], [])}
+    actual = role_trades("T", payload["signals"], prices, {}, "stock", TradingCosts(), {}, dates)
+    closed = [t for t in payload["trades"] if t["status"] == "closed"]
+    assert len(closed) >= 2
+    assert [(t["entry"], t["exit"], t["gross"], t["holding_days"]) for t in actual] == [
+        (t["entryDate"], t["exitDate"], t["returnRate"], t["holdingDays"]) for t in closed]
+
+
+def test_role_filter_delays_entry_but_never_blocks_exit():
+    from app.research.rule_variants import role_trades
+
+    dates, signals, prices, turns = synthetic([True] * 6)
+    for i, signal in enumerate(signals):
+        signal.update(premiseMet=True, entryTriggered=True, exitTriggered=i == 3)
+    trades = role_trades("T", signals, prices, turns, "stock", TradingCosts(), {}, dates,
+                         entry_allowed=lambda day: day == str(dates[1]))
+    assert len(trades) == 1
+    assert (trades[0]["signal_date"], trades[0]["entry"], trades[0]["exit"]) == tuple(
+        str(dates[i]) for i in (1, 2, 4))
+
+
+def test_market_filter_boundaries_history_and_no_future():
+    from app.research.rule_variants import MARKET_VARIANTS, market_filters
+
+    dates = [date(2026, 1, 1) + timedelta(days=i) for i in range(65)]
+    days = list(map(str, dates))
+    benchmark = {d: {"close": 100 if i < 60 else 101} for i, d in enumerate(days)}
+    rising = {d: 100 + i for i, d in enumerate(days)}
+    flat = dict.fromkeys(days, 100)
+    stocks = {"up": rising, "flat": flat, "new": {days[-1]: 1000}}
+    filters = market_filters(benchmark, stocks, dates)
+    _, m1, m2, m3, both = [filters[v.name] for v in MARKET_VARIANTS]
+    assert not m1[days[58]] and not m1[days[59]] and m1[days[60]]
+    assert not m2[days[59]] and m2[days[60]]
+    assert not any(m3.values())  # Exactly 50%, and a new listing is ineligible.
+    del stocks["flat"][days[60]]  # No valid current bar: excluded from denominator.
+    changed = market_filters(benchmark, stocks, dates)
+    assert changed[MARKET_VARIANTS[3].name][days[60]]
+    assert changed[MARKET_VARIANTS[4].name][days[60]]
+    assert not both[days[60]]
+    early = market_filters(benchmark, stocks, dates[:61])
+    assert all(early[name][d] == changed[name][d] for name in early for d in days[:61])
+    assert not changed[MARKET_VARIANTS[3].name][days[18]]
+    # A calendar gap in 0050 must not shift the five-session comparison.
+    del benchmark[days[59]]
+    missing = market_filters(benchmark, stocks, dates)
+    assert not missing[MARKET_VARIANTS[2].name][days[64]]
+
+
+def test_market_worker_compact_data_and_cli(monkeypatch, tmp_path):
+    from contextlib import nullcontext
+    from dataclasses import asdict
+
+    from app.conditions.types import ConditionBar
+    from app.research import rule_variants as module
+
+    dates = [date(2026, 1, 1) + timedelta(days=i) for i in range(65)]
+    raw = [ConditionBar(d, 100 + i, 101 + i, 99 + i, 100 + i, volume=100)
+           for i, d in enumerate(dates)]
+    monkeypatch.setattr(module, "load_data", lambda *a: (raw, [], {}))
+    result = process_stock(nullcontext, "T", rule(), dates[25], dates[-1], dates[0], dates,
+                           "stock", TradingCosts(), {}, variants=module.MARKET_VARIANTS)
+    assert result["reason"] is None
+    assert result["trades"] == []
+    assert len(result["closes"]) == 65
+    assert set(result["signals"][0]) == {
+        "date", "isMet", "premiseMet", "entryTriggered", "exitTriggered"}
+    assert all(isinstance(v, (int, float)) for v in result["opens"].values())
+
+    def research_stub(args):
+        variants = module.select_variants(args.variant_set, args.rule_id)
+        filters = module.market_filters({}, {}, dates)
+        return dict(parameters=dict(universe=args.universe, start=str(dates[0]),
+                                    end=str(dates[-1]), rule_id=args.rule_id,
+                                    variant_set=args.variant_set,
+                                    variants=[asdict(v) for v in variants]),
+                    universe_size=0, succeeded=0, skipped=[], benchmark_reason=None,
+                    statistics=summarize([], dates[0], dates[-1], variants),
+                    entry_allowance=module.entry_allowance(filters, dates, dates[0], dates[-1]))
+
+    monkeypatch.setattr(module, "run_research", research_stub)
+    argv = ["--universe", "market", "--variant-set", "market", "--out-json",
+            str(tmp_path / "out.json"), "--out-md", str(tmp_path / "out.md")]
+    module.main(argv)
+    report = (tmp_path / "out.md").read_text()
+    assert "允許進場比例" in report and "100.0%" in report
+    assert "舊戰法二" not in report and "拉回進場＝" not in report
+    assert len(module.select_variants("market", 1)) == 5
+    for variant in module.MARKET_VARIANTS:
+        assert variant.name in report
+        assert variant.conditions == module._tuning_conditions(buffer=0.02, rebound=True)
+    with pytest.raises(SystemExit) as error:
+        module.main(argv + ["--rule-id", "2"])
+    assert error.value.code == 2
+    with pytest.raises(ValueError, match="rule_id"):
+        module.select_variants("market", 2)
+
+
+def test_market_main_thread_replays_after_collecting_pool(monkeypatch):
+    from contextlib import nullcontext
+    from unittest.mock import Mock
+
+    from app.research import rule_variants as module
+
+    dates, signals, prices, turns = synthetic([True, True, True, True, False, False])
+    for i, signal in enumerate(signals):
+        signal.update(premiseMet=True, entryTriggered=True, exitTriggered=i == 4)
+    db = Mock()
+    db.execute.return_value.all.return_value = []
+    db.scalars.return_value = []
+    monkeypatch.setattr(module, "load_universe", lambda *a: ["T"])
+    monkeypatch.setattr(module, "chosen_rules", lambda *a: [rule()])
+    monkeypatch.setattr(module, "load_calendar", lambda *a: dates)
+    monkeypatch.setattr(module, "load_benchmark", lambda *a: {})
+    collected = []
+
+    def worker(*args):
+        collected.append(True)
+        return dict(ticker="T", reason=None, trades=[], signals=signals, turnover=turns,
+                    opens={d: b.open for d, b in prices.items()},
+                    closes=dict.fromkeys(prices, 100))
+
+    def filters(benchmark, closes, calendar, index_benchmark=None, index_dates=None):
+        assert collected and closes == {"T": dict.fromkeys(prices, 100)}
+        return {v.name: {str(d): i >= j for i, d in enumerate(calendar)}
+                for j, v in enumerate(module.MARKET_VARIANTS)}
+
+    monkeypatch.setattr(module, "process_stock", worker)
+    monkeypatch.setattr(module, "market_filters", filters)
+    result = module.run_research(SimpleNamespace(
+        variant_set="market", rule_id=1, start=dates[0], end=dates[-1],
+        years=1, universe="market", workers=1), factory=lambda: nullcontext(db))
+    assert len(result["trades"]) == 4  # The last variant remains open at the end.
+    assert [t["signal_date"] for t in result["trades"]] == list(map(str, dates[:4]))
+    assert all(t["exit"] == str(dates[-1]) for t in result["trades"])
+    assert result["entry_allowance"]["2026"]["無濾網"] == 1
+    assert result["entry_allowance"]["2025"]["無濾網"] is None
+    assert result["stocks"] == [{"ticker": "T", "reason": None}]
+
+
+def test_market_filters_use_longer_index_history_for_m1():
+    # Regression: with only the study warm-up, the 60-day mean did not exist early in the
+    # study and M1 blocked every entry for lack of data, flattering the first half-year.
+    from datetime import date, timedelta
+
+    from app.research.rule_variants import market_filters
+
+    index_dates = [date(2024, 1, 1) + timedelta(days=i) for i in range(100)]
+    study_dates = index_dates[80:]
+    index_benchmark = {d.isoformat(): {"open": 100 + i, "close": 100 + i}
+                       for i, d in enumerate(index_dates)}
+    study_benchmark = {d: v for d, v in index_benchmark.items() if d >= study_dates[0].isoformat()}
+    short = market_filters(study_benchmark, {}, study_dates)
+    long = market_filters(study_benchmark, {}, study_dates, index_benchmark, index_dates)
+    m1 = next(name for name in long if name.startswith("M1"))
+    first = study_dates[0].isoformat()
+    assert short[m1][first] is False
+    assert long[m1][first] is True

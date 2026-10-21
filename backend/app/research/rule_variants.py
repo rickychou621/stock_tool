@@ -110,7 +110,18 @@ RULE2_TUNING = (
 )
 
 
+MARKET_VARIANTS = tuple(
+    Variant(name, source="engine", conditions=_tuning_conditions(buffer=0.02, rebound=True))
+    for name in ("無濾網", "M1 0050 在 60 日線上", "M2 0050 月線上揚",
+                 "M3 過半股票在月線上", "M1＋M3")
+)
+
+
 def select_variants(variant_set, rule_id):
+    if variant_set == "market":
+        if rule_id != 1:
+            raise ValueError("--variant-set market 僅支援 rule_id == 1")
+        return MARKET_VARIANTS
     if variant_set == "tuning":
         if rule_id != 1:
             raise ValueError("--variant-set tuning 僅支援 rule_id == 1")
@@ -380,6 +391,113 @@ def engine_trades(ticker, payload, turnover, kind, variant, costs, benchmark):
     return trades
 
 
+def role_trades(ticker, signals, prices, turnover, kind, costs, benchmark, dates,
+                entry_allowed=None, variant_name="無濾網"):
+    """Replay daily role signals; filters gate buy orders, never exits or fills."""
+    indices = {d.isoformat(): i for i, d in enumerate(dates)}
+    trades, position, pending, prior = [], None, None, False
+    signal_day = None
+    for signal in signals:
+        day = signal["date"]
+        if pending == "buy":
+            position = day
+        elif pending == "sell":
+            entry = getattr(prices[position], "open", prices[position])
+            exit = getattr(prices[day], "open", prices[day])
+            trades.extend(engine_trades(
+                ticker, {"trades": [dict(
+                    status="closed", entrySignalDate=signal_day, entryDate=position,
+                    exitDate=day, entryPrice=entry, exitPrice=exit,
+                    returnRate=exit / entry - 1,
+                    holdingDays=indices[day] - indices[position],
+                )]}, turnover, kind, Variant(variant_name, source="engine"), costs, benchmark,
+            ))
+            position = None
+        pending = None
+        met = signal["isMet"]
+        if position is not None:
+            triggered = signal.get("exitTriggered")
+            if triggered if triggered is not None else not met:
+                pending = "sell"
+        else:
+            triggered = signal.get("entryTriggered")
+            buy = (signal.get("premiseMet") and triggered
+                   if triggered is not None else met and not prior)
+            if buy and (entry_allowed is None or entry_allowed(day)):
+                pending, signal_day = "buy", day
+        prior = met
+    return trades
+
+
+def market_filters(benchmark, stock_closes, dates, index_benchmark=None, index_dates=None):
+    """Trailing usable-bar means; M2 compares five exchange sessions earlier.
+
+    Future adjustment factors scale every price in a past comparison equally;
+    the common end-date basis therefore preserves these inequalities.
+    Missing current bars and insufficient history never pass a filter.
+    index_benchmark／index_dates: a longer 0050 history for M1/M2, so the 60-day mean
+    exists from the first study day instead of blocking early entries for lack of data.
+    """
+    days = [d.isoformat() for d in dates]
+    columns = {day: i for i, day in enumerate(days)}
+
+    def rolling(closes, period):
+        ordered = sorted(day for day in closes if day in columns)
+        values = np.array([closes[day] for day in ordered], dtype=float)
+        if len(values) < period:
+            return {}
+        means = np.lib.stride_tricks.sliding_window_view(values, period).mean(axis=1)
+        return dict(zip(ordered[period - 1:], means, strict=True))
+
+    index_days = [d.isoformat() for d in (index_dates or dates)]
+    index_columns = {day: i for i, day in enumerate(index_days)}
+    closes = {
+        day: bar["close"] for day, bar in (index_benchmark or benchmark).items()
+        if day in index_columns
+    }
+    ordered = sorted(closes)
+    values = np.array([closes[day] for day in ordered], dtype=float)
+
+    def index_rolling(period):
+        if len(values) < period:
+            return {}
+        means = np.lib.stride_tricks.sliding_window_view(values, period).mean(axis=1)
+        return dict(zip(ordered[period - 1:], means, strict=True))
+
+    ma60, ma20 = index_rolling(60), index_rolling(20)
+    m1 = {day: bool(day in ma60 and closes[day] > ma60[day]) for day in days}
+    position = {day: i for i, day in enumerate(index_days)}
+    m2 = {}
+    for day in days:
+        i = position.get(day)
+        earlier = index_days[i - 5] if i is not None and i >= 5 else None
+        m2[day] = bool(earlier and day in ma20 and earlier in ma20 and ma20[day] > ma20[earlier])
+    eligible = np.zeros(len(days), dtype=int)
+    above = np.zeros(len(days), dtype=int)
+    for closes in stock_closes.values():
+        averages = rolling(closes, 20)
+        positions = np.array([columns[day] for day in averages], dtype=int)
+        eligible[positions] += 1
+        above[positions] += np.array([closes[day] > avg for day, avg in averages.items()],
+                                    dtype=int)
+    m3 = {day: bool(eligible[i] and above[i] * 2 > eligible[i])
+          for i, day in enumerate(days)}
+    return dict(zip((v.name for v in MARKET_VARIANTS),
+                    ({day: True for day in days}, m1, m2, m3,
+                     {day: m1[day] and m3[day] for day in days}), strict=True))
+
+
+def entry_allowance(filters, dates, start, end):
+    periods = (("2024-07～12", date(2024, 7, 1), date(2024, 12, 31)),
+               ("2025", date(2025, 1, 1), date(2025, 12, 31)),
+               ("2026", date(2026, 1, 1), date(2026, 12, 31)))
+    return {label: {
+        name: mean(allowed.get(day.isoformat(), False) for day in selected) if selected else None
+        for name, allowed in filters.items()
+    } for label, first, last in periods
+        for selected in [[d for d in dates if max(first, start) <= d <= min(last, end)]]}
+
+
 def add_baselines(trades, stock_opens, dates, start, costs, kinds=None, min_stocks=50):
     """Enrich trades without changing fills; dates retain suspended sessions."""
     days = [d.isoformat() for d in dates if d >= start]
@@ -507,7 +625,25 @@ def markdown(result):
     lines.append(
         "現行定義＝DB 中的戰法定義，交易由正式回測引擎產生（與網頁回測、全市場掃描一致）。"
     )
-    if params.get("variant_set") == "tuning":
+    if params.get("variant_set") == "market":
+        lines = [line for line in lines
+                 if not line.startswith(("拉回進場＝", "現行定義＝"))]
+        lines += [
+            "市場濾網使用 A1＋B：ma_rising(20, 5)、ma_touch_rebound(20, 0.01)、"
+            "close_below_ma_days(20, 2, buffer=0.02)。只限制訊號日進場，不影響出場。",
+            "M1：0050 收盤 > 60 日均線；M2：0050 月線 > 5 個交易日前月線；"
+            "M3：股票池當日有效且滿 20 根的股票，收盤 > 月線比例 > 50%。",
+            "", "## 允許進場比例", "",
+            "分母為研究期間內各段交易日；資料不足日不允許進場，無交易日顯示 —。",
+            "", "| 濾網 | 2024-07～12 | 2025 | 2026 |", "|---|---:|---:|---:|",
+        ]
+        for variant in MARKET_VARIANTS:
+            cells = [variant.name]
+            for period in ("2024-07～12", "2025", "2026"):
+                value = result["entry_allowance"][period][variant.name]
+                cells.append("—" if value is None else f"{value:.1%}")
+            lines.append("| " + " | ".join(cells) + " |")
+    elif params.get("variant_set") == "tuning":
         lines.append("")
         # Each line records the complete replacement, including unchanged roles.
         for variant in params["variants"]:
@@ -608,9 +744,31 @@ def process_stock(
     variants=VARIANTS,
 ):
     started = time.perf_counter()
+    closes = {}
     try:
         with factory() as db:
             raw, events, turnover = load_data(db, ticker, warm, end, dates, listed_on, absent)
+        if variants == MARKET_VARIANTS:
+            prices = {b.trade_date.isoformat(): b
+                      for b in adjusted_bars([b for b in raw if usable(b)], events)}
+            closes = {day: b.close for day, b in prices.items()}
+            if getattr(rule, "evaluation_frequency", "daily") != "daily":
+                raise ValueError("market 重播僅支援 daily 戰法")
+            replacement = rule_snapshot(rule)
+            replacement["conditions"] = [
+                dict(condition_id=cid, params=values.copy(), role=role, sort_order=i)
+                for i, (cid, values, role) in enumerate(MARKET_VARIANTS[0].conditions)
+            ]
+            payload = simulate(restore_rule(replacement), ticker, raw, events, start, end, dates)
+            fields = ("date", "isMet", "premiseMet", "entryTriggered", "exitTriggered")
+            return dict(
+                ticker=ticker, trades=[], reason=None,
+                signals=[{key: signal[key] for key in fields} for signal in payload["signals"]],
+                opens={day: b.open for day, b in prices.items()}, closes=closes,
+                turnover={s["date"]: turnover.get(s["date"]) for s in payload["signals"]},
+                elapsed_seconds=time.perf_counter() - started,
+                actual_start=payload["actualStart"], actual_end=payload["actualEnd"],
+            )
         payload = simulate(rule, ticker, raw, events, start, end, dates)
         signals = payload["signals"]
         if rule.id in LEGACY_RULES and any(v.source == "signals" for v in variants):
@@ -674,6 +832,7 @@ def process_stock(
         return dict(
             ticker=ticker,
             trades=[],
+            **({"closes": closes} if variants == MARKET_VARIANTS else {}),
             reason=f"{type(exc).__name__}: {exc}",
             elapsed_seconds=time.perf_counter() - started,
         )
@@ -708,6 +867,14 @@ def run_research(args, factory=SessionLocal):
                 )
             except Exception as exc:
                 benchmark_reason = f"{type(exc).__name__}: {exc}"
+        index_benchmark, index_dates = None, None
+        if variant_set == "market" and not calendar_reason:
+            # 0050 history before the study warm-up, so M1's 60-day mean exists on day one.
+            index_start = start - timedelta(days=150)
+            index_dates = load_calendar(db, index_start, args.end)
+            index_benchmark = load_benchmark(
+                db, index_start, args.end, index_dates, listed.get("0050"), absent
+            )
     results = []
     if calendar_reason:
         results = [
@@ -747,6 +914,21 @@ def run_research(args, factory=SessionLocal):
                         file=sys.stderr,
                     )
     results.sort(key=lambda r: r["ticker"])
+    market_extra = {}
+    if variant_set == "market":
+        filters = market_filters(
+            benchmark, {r["ticker"]: r.get("closes", {}) for r in results}, dates,
+            index_benchmark, index_dates,
+        )
+        market_extra["entry_allowance"] = entry_allowance(filters, dates, start, args.end)
+        for result in results:
+            if result["reason"] is None:
+                for variant in variants:
+                    result["trades"].extend(role_trades(
+                        result["ticker"], result["signals"], result["opens"], result["turnover"],
+                        kinds.get(result["ticker"]) or "stock", costs, benchmark, dates,
+                        entry_allowed=filters[variant.name].get, variant_name=variant.name,
+                    ))
     trades = [t for r in results for t in r["trades"]]
     add_baselines(
         trades,
@@ -757,6 +939,7 @@ def run_research(args, factory=SessionLocal):
         kinds,
     )
     return dict(
+        **market_extra,
         parameters=dict(
             universe=args.universe,
             rule_id=args.rule_id,
@@ -775,7 +958,9 @@ def run_research(args, factory=SessionLocal):
         skipped=[dict(ticker=r["ticker"], reason=r["reason"]) for r in results if r["reason"]],
         benchmark_reason=benchmark_reason,
         trades=trades,
-        stocks=[{k: v for k, v in r.items() if k not in ("trades", "opens")} for r in results],
+        stocks=[{k: v for k, v in r.items()
+                 if k not in ("trades", "opens", "closes", "signals", "turnover")}
+                for r in results],
         statistics=summarize(trades, start, args.end, variants),
         elapsed_seconds=time.perf_counter() - started,
     )
@@ -791,7 +976,7 @@ def positive_int(value):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--universe", required=True, choices=("market", "watchlist", "candidates"))
-    parser.add_argument("--variant-set", choices=("all", "tuning"), default="all")
+    parser.add_argument("--variant-set", choices=("all", "tuning", "market"), default="all")
     parser.add_argument("--rule-id", type=positive_int, default=1)
     parser.add_argument(
         "--end", type=date.fromisoformat, default=taipei_today() - timedelta(days=1)
@@ -803,8 +988,8 @@ def main(argv=None):
     parser.add_argument("--out-json", type=Path, required=True)
     parser.add_argument("--out-md", type=Path, required=True)
     args = parser.parse_args(argv)
-    if args.variant_set == "tuning" and args.rule_id != 1:
-        parser.error("--variant-set tuning 僅支援 rule_id == 1")
+    if args.variant_set in ("tuning", "market") and args.rule_id != 1:
+        parser.error(f"--variant-set {args.variant_set} 僅支援 rule_id == 1")
     if args.out_json.resolve() == args.out_md.resolve():
         parser.error("JSON 與 Markdown 路徑不可相同")
     result = run_research(args)
