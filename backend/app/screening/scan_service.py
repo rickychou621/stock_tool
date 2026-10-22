@@ -1,5 +1,6 @@
 """手動掃描只產生結果與告警紀錄；Telegram 必須另外由使用者發送。"""
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -53,7 +54,7 @@ class ScreeningScanService:
         self._market_data_repository = MarketDataRepository(db)
         self._db = db
 
-    def run_scan(self) -> ScanSummary:
+    def run_scan(self, progress: Callable[[int, int], None] | None = None) -> ScanSummary:
         rules = self._rule_repository.list_enabled()
         tickers = self._market_data_repository.list_chartable_tickers()
         categories = get_settings().excluded_etf_categories
@@ -64,15 +65,15 @@ class ScreeningScanService:
         summary = ScanSummary(len(rules), len(scan_tickers), 0, len(tickers) - len(scan_tickers))
         tickers = scan_tickers
         names = self._market_data_repository.get_names(tickers)
-        kinds: dict[str, str] = {}
-        for rule in rules:
-            for ticker in tickers:
-                if ticker not in kinds:
-                    kinds[ticker] = instrument_kind(self._db, ticker)
+        if progress:
+            progress(0, len(tickers))
+        for done, ticker in enumerate(tickers, start=1):
+            kind = instrument_kind(self._db, ticker) if rules else None
+            for rule in rules:
                 try:
                     result, state = evaluate_with_state(
                         self._db, rule, ticker,
-                        kind=kinds[ticker],
+                        kind=kind,
                     )
                 except (ValueError, TypeError, ArithmeticError):
                     summary.issues.append(
@@ -133,4 +134,6 @@ class ScreeningScanService:
                         reasons=[c.reason for c in result.condition_results],
                     )
                 )
+            if progress:
+                progress(done, len(tickers))
         return summary

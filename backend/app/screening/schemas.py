@@ -1,6 +1,7 @@
 """候選池對外API的請求/回應格式。"""
 
 from datetime import date, datetime
+from typing import Literal
 
 from app.core.schemas import CamelModel
 
@@ -44,3 +45,15 @@ class CandidateRefreshSummarySchema(CamelModel):
     added: int
     expired: int
     active_total: int
+
+
+class ScanJobStartedSchema(CamelModel):
+    job_id: str
+
+
+class ScanJobSchema(ScanJobStartedSchema):
+    status: Literal["running", "done", "failed"]
+    done: int
+    total: int
+    summary: ScanSummarySchema | None
+    error: str | None

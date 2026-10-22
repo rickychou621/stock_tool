@@ -13,6 +13,7 @@ from app.market_scan.service import manager as market_scan_manager
 from app.rules.router import router as rules_router
 from app.scheduler.router import router as schedule_router
 from app.scheduler.scheduler import start_scheduler, stop_scheduler
+from app.screening.jobs import manager as screening_manager
 from app.screening.router import router as screening_router
 from app.settings.router import router as settings_router
 from app.watchlist.router import router as watchlist_router
@@ -29,6 +30,7 @@ async def lifespan(app: FastAPI):
         stop_scheduler()
         backtest_manager.close()
         market_scan_manager.close()
+        screening_manager.close()
 
 
 app = FastAPI(title="股票告警系統 API", lifespan=lifespan)

@@ -50,3 +50,12 @@ export interface NotificationSummary {
   skippedIds: number[]
   failedIds: number[]
 }
+
+export interface ScanJob {
+  jobId: string
+  status: 'running' | 'done' | 'failed'
+  done: number
+  total: number
+  summary: ScanSummary | null
+  error: string | null
+}

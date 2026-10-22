@@ -5,9 +5,9 @@ import { Link } from 'react-router-dom'
 import { apiClient } from '../../api/client'
 import { TodayMatchesTable } from './components/TodayMatchesTable'
 import { AddToWatchlistButton } from '../watchlist/components/AddToWatchlistButton'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { STATE_LABELS, STATE_URGENCY, type RuleStateCode } from '../rules/state'
-import type { ScanSummary, TodayMatchItem, NotificationSummary } from './types'
+import type { ScanJob, ScanSummary, TodayMatchItem, NotificationSummary } from './types'
 
 const FILTER_STATES: RuleStateCode[] = ['ENTRY', 'EXIT', 'NEAR_EXIT', 'HOLD']
 
@@ -24,16 +24,38 @@ export function ScreeningPage() {
     initialData: null,
     enabled: false,
   })
+  const appliedJob = useQuery<string | null>({
+    queryKey: ['applied-scan-job'],
+    queryFn: async () => null,
+    initialData: null,
+    enabled: false,
+  })
+  const scanJob = useQuery({
+    queryKey: ['scan-job'],
+    queryFn: () => apiClient.get<ScanJob | null>('/screening/run/latest'),
+    refetchInterval: (query) => query.state.data?.status === 'running' ? 1000 : false,
+  })
+  useEffect(() => {
+    const job = scanJob.data
+    if (job?.status !== 'done' || !job.summary) return
+    if (appliedJob.data === job.jobId) return
+    queryClient.setQueryData(['latest-scan'], job.summary)
+    queryClient.setQueryData(['applied-scan-job'], job.jobId)
+    void queryClient.invalidateQueries({ queryKey: ['alerts'] })
+  }, [scanJob.data, appliedJob.data, queryClient])
   const scanMutation = useMutation({
-    mutationFn: () => apiClient.post<ScanSummary>('/screening/run'),
-    onMutate: () => {
+    mutationFn: () => apiClient.post<{ jobId: string }>('/screening/run'),
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ['scan-job'] })
       queryClient.setQueryData(['latest-scan'], null)
       notifyMutation.reset()
     },
-    onSuccess: (data) => {
-      queryClient.setQueryData(['latest-scan'], data)
-      return queryClient.invalidateQueries({ queryKey: ['alerts'] })
+    onSuccess: ({ jobId }) => {
+      queryClient.setQueryData<ScanJob>(['scan-job'], {
+        jobId, status: 'running', done: 0, total: 0, summary: null, error: null,
+      })
     },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['scan-job'] }),
   })
   const notifyMutation = useMutation({
     mutationFn: async (alertIds: number[]) => {
@@ -61,6 +83,7 @@ export function ScreeningPage() {
       return result
     },
   })
+  const scanning = scanMutation.isPending || scanJob.data?.status === 'running'
   const scan = snapshot.data
   const matches = scan?.matches ?? []
   const pendingMatches = matches.filter(
@@ -103,14 +126,16 @@ export function ScreeningPage() {
           className="button-primary"
           type="button"
           onClick={() => scanMutation.mutate()}
-          disabled={scanMutation.isPending || notifyMutation.isPending}
+          disabled={scanning || notifyMutation.isPending}
         >
-          {scanMutation.isPending ? '掃描中…' : '立即掃描'}
+          {scanning
+            ? `掃描中…${scanJob.data?.total ? ` ${scanJob.data.done}/${scanJob.data.total}` : ''}`
+            : '立即掃描'}
         </button>{' '}
         <button
           className="button-notify"
           type="button"
-          disabled={!pendingIds.length || scanMutation.isPending || notifyMutation.isPending}
+          disabled={!pendingIds.length || scanning || notifyMutation.isPending}
           onClick={() => {
             if (
               pendingStocks > 50 &&
@@ -128,7 +153,12 @@ export function ScreeningPage() {
         </p>
         {scanMutation.isError && (
           <p role="alert" className="error-text">
-            掃描失敗，請重試。
+            {scanMutation.error.message}
+          </p>
+        )}
+        {scanJob.data?.status === 'failed' && (
+          <p role="alert" className="error-text">
+            掃描失敗：{scanJob.data.error}
           </p>
         )}
         {notifyMutation.isError && (

@@ -5,7 +5,7 @@ from datetime import date, timedelta
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import BigInteger, Integer, MetaData, create_engine, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.alerts.models import AlertLog
@@ -17,6 +17,8 @@ from app.market_data.models import Stock, StockPriceDaily
 from app.market_data.service import MarketDataService
 from app.rules.models import WatchRule, WatchRuleCondition
 from app.rules.preparation import history_days
+from app.screening import router as screening_router
+from app.screening.jobs import ScanJobManager
 
 
 @pytest.fixture
@@ -33,6 +35,9 @@ def context(monkeypatch):
             if isinstance(column.type, BigInteger):
                 column.type = Integer()
     metadata.create_all(engine)
+    scan_manager = ScanJobManager(session_factory=sessionmaker(bind=engine))
+    monkeypatch.setattr(screening_router, "manager", scan_manager)
+    monkeypatch.setattr("app.main.screening_manager", scan_manager)
     with Session(engine) as db:
         db.add_all([Stock(ticker=t, name=t, market="上市") for t in ("2330", "2317", "2454")])
         for ticker, count in (("2330", 30), ("2317", 30), ("2454", 1)):
@@ -68,11 +73,19 @@ def context(monkeypatch):
     engine.dispose()
 
 
+def run_scan(client):
+    response = client.post("/screening/run")
+    assert response.status_code == 202
+    screening_router.manager.close()
+    latest = client.get("/screening/run/latest").json()
+    assert latest["jobId"] == response.json()["jobId"]
+    assert latest["status"] == "done", latest["error"]
+    return latest["summary"]
+
+
 def test_scan_only_returns_matches_and_never_sends_telegram(context):
     client, db, _, sent = context
-    result = client.post("/screening/run")
-    assert result.status_code == 200
-    payload = result.json()
+    payload = run_scan(client)
     assert payload["stocksScanned"] == 3
     assert payload["excluded"] == 0
     assert payload["matches"][0]["name"] == "2330"
@@ -84,7 +97,7 @@ def test_scan_only_returns_matches_and_never_sends_telegram(context):
     assert sent == []
     assert len(list(db.scalars(select(AlertLog)))) == 1
     # Repeat scan still displays a match, but doesn't duplicate historical alerts.
-    again = client.post("/screening/run").json()
+    again = run_scan(client)
     assert again["newAlerts"] == 0
     assert len(again["matches"]) == 1
     # Today's historical match must not appear as a current match after data changes.
@@ -95,12 +108,12 @@ def test_scan_only_returns_matches_and_never_sends_telegram(context):
     )
     bar.volume = 1000
     db.commit()
-    assert client.post("/screening/run").json()["matches"] == []
+    assert run_scan(client)["matches"] == []
 
 
 def test_notifications_require_explicit_action_and_skip_successful_repeats(context):
     client, _, _, sent = context
-    match = client.post("/screening/run").json()["matches"][0]
+    match = run_scan(client)["matches"][0]
     alert_id = match["id"]
     result = client.post("/alerts/notify", json={"alertIds": [alert_id, alert_id]}).json()
     assert result == {"sentIds": [alert_id], "skippedIds": [], "failedIds": []}
@@ -114,7 +127,7 @@ def test_notifications_require_explicit_action_and_skip_successful_repeats(conte
 
 def test_failed_notification_can_be_retried(context, monkeypatch):
     client, _, _, sent = context
-    alert_id = client.post("/screening/run").json()["matches"][0]["id"]
+    alert_id = run_scan(client)["matches"][0]["id"]
 
     def fail(self, message):
         raise RuntimeError("unavailable")
@@ -203,7 +216,7 @@ def test_notification_includes_stock_name_once(context, existing_name):
     stock = db.scalar(select(Stock).where(Stock.ticker == "2330"))
     stock.name = "台積電"
     db.commit()
-    match = client.post("/screening/run").json()["matches"][0]
+    match = run_scan(client)["matches"][0]
     alert = db.get(AlertLog, match["id"])
     if existing_name:
         alert.message = alert.message.replace("2330 ", "2330 台積電 ", 1)
@@ -438,3 +451,36 @@ def test_long_unicode_digest_splits_without_losing_alerts(context, monkeypatch):
     assert all(len(message.encode("utf-16-le")) // 2 <= 4096 for message in sent)
     assert sum(message.count("台積電") for message in sent) == 50
     assert sum(message.count("觸及上軌") for message in sent) == 50
+
+
+def test_scan_progress_counts_stocks_after_all_rules_and_excludes_etfs(context, monkeypatch):
+    from app.core.config import get_settings
+    from app.market_scan.models import MarketInstrument
+    from app.screening import scan_service
+
+    _, db, _, _ = context
+    monkeypatch.setattr(get_settings(), "screening_excluded_etf_categories", "bond")
+    db.add(MarketInstrument(ticker="2454", kind="etf", etf_category="bond",
+                            listed_on=date.today()))
+    db.add(WatchRule(name="第二戰法", logic_operator="AND", is_enabled=True,
+                     conditions=[WatchRuleCondition(condition_id="volume_spike", params={})]))
+    db.commit()
+    evaluated = []
+    updates = []
+    evaluate = scan_service.evaluate_with_state
+
+    def record(*args, **kwargs):
+        evaluated.append(args[2])
+        return evaluate(*args, **kwargs)
+
+    def progress(done, total):
+        assert len(evaluated) == done * 2
+        updates.append((done, total))
+
+    monkeypatch.setattr(scan_service, "evaluate_with_state", record)
+    summary = scan_service.ScreeningScanService(db).run_scan(progress=progress)
+    assert updates == [(0, 2), (1, 2), (2, 2)]
+    assert updates[-1] == (summary.stocks_scanned, summary.stocks_scanned)
+    assert evaluated[0] == evaluated[1]
+    assert evaluated[2] == evaluated[3]
+    assert "2454" not in evaluated

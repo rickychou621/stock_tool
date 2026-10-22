@@ -1,15 +1,16 @@
 from dataclasses import asdict
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db
 from app.screening.candidate_service import CandidatePoolService
-from app.screening.scan_service import ScreeningScanService
+from app.screening.jobs import ScanBusy, manager
 from app.screening.schemas import (
     CandidateRefreshSummarySchema,
     CandidateStockSchema,
-    ScanSummarySchema,
+    ScanJobSchema,
+    ScanJobStartedSchema,
 )
 from app.screening.service import ScreeningService
 
@@ -44,10 +45,15 @@ def refresh_candidate_pool(
     )
 
 
-@router.post("/run", response_model=ScanSummarySchema)
-def run_screening_scan(db: Session = Depends(get_db)) -> ScanSummarySchema:
-    """手動觸發「排程未來要做的事情」：跑一次全部啟用規則 × 全部股票的評估，
-    命中且今天還沒記錄過的寫進alerts_log。排程之後只要定時呼叫同一個
-    ScreeningScanService.run_scan()，不需要另外實作。"""
-    summary = ScreeningScanService(db).run_scan()
-    return ScanSummarySchema(**asdict(summary))
+@router.post("/run", response_model=ScanJobStartedSchema, status_code=202)
+def run_screening_scan() -> ScanJobStartedSchema:
+    try:
+        return ScanJobStartedSchema(job_id=manager.start())
+    except ScanBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/run/latest", response_model=ScanJobSchema | None)
+def latest_screening_scan() -> ScanJobSchema | None:
+    job = manager.latest()
+    return ScanJobSchema(**asdict(job)) if job else None
