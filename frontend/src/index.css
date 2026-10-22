@@ -932,3 +932,18 @@ details li + li {
 .market-pagination { margin-top: 1rem; }
 @media(max-width: 900px) { .market-controls { grid-template-columns: 1fr; } .market-filters, .market-stats { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media(max-width: 480px) { .market-section-heading > button { width: 100%; } .market-pagination { justify-content: center; } .market-pagination span { order: -1; width: 100%; text-align: center; } }
+
+.backtest-stale-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 1rem;
+  margin-bottom: 18px;
+  border-radius: .5rem;
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+.backtest-stale { opacity: .6; }
+.stale-mark { color: var(--warning); margin-left: .3rem; cursor: help; }

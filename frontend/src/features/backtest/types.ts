@@ -53,7 +53,8 @@ export interface Report {
     failed: number
     errors: { ticker: string | null; reason: string }[]
   }
-  overall: (Performance & { stockCount: number })[]
+  staleInfo: { reason: 'definition' | 'data'; changedAt: string | null; ruleIds: number[] } | null
+  overall: (Performance & { stockCount: number; stale: boolean })[]
   stocks: StockPerformance[]
 }
 export interface Trade {

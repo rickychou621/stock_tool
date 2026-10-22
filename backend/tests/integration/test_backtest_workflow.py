@@ -1,5 +1,5 @@
 import copy
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from threading import Barrier, Event, Lock
 from unittest.mock import Mock
 from zoneinfo import ZoneInfo
@@ -95,7 +95,7 @@ def make_manager(factory, worker=success):
     )
 
 
-def test_partial_failure_retains_stale_excludes_old_and_snapshot_is_atomic(factory):
+def test_partial_failure_includes_stale_and_snapshot_is_atomic(factory):
     manager = make_manager(factory)
     first = manager.start([1], now=NOW)
     manager.close()
@@ -121,8 +121,10 @@ def test_partial_failure_retains_stale_excludes_old_and_snapshot_is_atomic(facto
         report = read_report(db)
         assert report["task"]["status"] == "partial_failure"
         assert report["task"]["succeeded"] == report["task"]["failed"] == 1
-        assert report["overall"][0]["stockCount"] == 1
-        assert report["overall"][0]["metrics"]["tradeCount"] == 1
+        assert report["overall"][0]["stockCount"] == 2
+        assert report["overall"][0]["metrics"]["tradeCount"] == 2
+        assert report["overall"][0]["stale"] is True
+        assert report["staleInfo"] == dict(reason="data", changedAt=None, ruleIds=[1])
         stale = db.scalar(select(BacktestResult).where(BacktestResult.ticker == "2"))
         assert stale.stale and stale.payload == old and stale.batch_id == first
         assert len(list(db.scalars(select(BacktestTask)))) == 1
@@ -309,7 +311,9 @@ def test_batch_data_source_error_keeps_previous_results(factory):
     with factory() as db:
         report = read_report(db)
         assert report["task"]["status"] == "failed"
-        assert report["overall"] == []
+        assert report["overall"][0]["stockCount"] == 2
+        assert report["overall"][0]["stale"] is True
+        assert report["staleInfo"] == dict(reason="data", changedAt=None, ruleIds=[1])
         assert all(s["stale"] for s in report["stocks"])
 
 
@@ -388,7 +392,7 @@ def test_event_failure_visible_in_backtest_errors(factory, monkeypatch):
 
 
 @pytest.mark.parametrize("change", ["missing", "role", "frequency", "same"])
-def test_definition_fingerprint_persisted_and_report_excludes_changed(factory, change):
+def test_definition_fingerprint_persisted_and_report_includes_changed(factory, change):
     from app.backtest.service import definition_fingerprint, rule_snapshot
 
     manager = make_manager(factory)
@@ -411,11 +415,18 @@ def test_definition_fingerprint_persisted_and_report_excludes_changed(factory, c
     with factory() as db:
         report = read_report(db)
         assert all(s["needsRerun"] == (change != "same") for s in report["stocks"])
+        assert report["overall"][0]["stockCount"] == len(report["stocks"]) == 2
+        assert report["overall"][0]["stale"] == (change != "same")
         if change == "same":
+            assert report["staleInfo"] is None
             assert report["overall"][0]["stockCount"] == 2
             assert all("rerunReason" not in s for s in report["stocks"])
         else:
-            assert report["overall"] == []
+            assert report["staleInfo"] == dict(
+                reason="definition",
+                changedAt=db.get(WatchRule, 1).updated_at.replace(tzinfo=UTC).isoformat(),
+                ruleIds=[1],
+            )
             assert all(s["rerunReason"] == "戰法定義已變更，需重新回測"
                        for s in report["stocks"])
 
@@ -460,3 +471,52 @@ def test_report_rule_queries_do_not_grow_with_result_count(factory):
         task.rule_ids = list(range(1, 12))
         db.commit()
     assert queries() == before
+
+
+def test_report_legacy_results_excluded_from_overall(factory):
+    manager = make_manager(factory)
+    manager.start([1], now=NOW)
+    manager.close()
+    with factory() as db:
+        for row in db.scalars(select(BacktestResult)):
+            row.summary = {k: v for k, v in row.summary.items() if k != "schemaVersion"}
+        db.commit()
+        report = read_report(db)
+        assert len(report["stocks"]) == 2
+        assert all(s["needsRerun"] for s in report["stocks"])
+        assert report["overall"] == []
+        assert report["staleInfo"] == dict(reason="data", changedAt=None, ruleIds=[1])
+
+
+def test_report_without_task_has_no_stale_info(factory):
+    with factory() as db:
+        assert read_report(db) == dict(task=None, stocks=[], overall=[], staleInfo=None)
+
+
+def test_stale_info_prioritizes_definition_and_latest_changed_rule(factory):
+    manager = make_manager(factory)
+    manager.start([1], now=NOW)
+    manager.close()
+    with factory() as db:
+        task = db.get(BacktestTask, 1)
+        source = db.scalar(select(BacktestResult))
+        for rule_id, updated_at in [
+            (3, datetime(2026, 10, 20, 1)),
+            (2, datetime(2026, 10, 21, 2)),
+        ]:
+            db.add(WatchRule(id=rule_id, name=str(rule_id), updated_at=updated_at))
+            db.add(BacktestResult(
+                ticker="1", rule_id=rule_id, rule_name=str(rule_id), stock_name="Stock 1",
+                batch_id=task.batch_id, stale=False, calculated_at=source.calculated_at,
+                summary=copy.deepcopy(source.summary), payload=copy.deepcopy(source.payload),
+            ))
+        source.stale = True
+        db.get(WatchRule, 1).updated_at = datetime(2026, 10, 22, 3)
+        task.rule_ids = [3, 1, 2]
+        db.commit()
+        report = read_report(db)
+        assert report["staleInfo"] == dict(
+            reason="definition", changedAt="2026-10-21T02:00:00+00:00", ruleIds=[1, 2, 3],
+        )
+        assert sum(group["stockCount"] for group in report["overall"]) == len(report["stocks"])
+        assert all(group["stale"] for group in report["overall"])

@@ -366,7 +366,7 @@ def average_excess(trades):
 def read_report(db):
     task = db.get(BacktestTask, 1)
     if task is None:
-        return dict(task=None, overall=[], stocks=[])
+        return dict(task=None, overall=[], stocks=[], staleInfo=None)
     rows = list(
         db.scalars(
             select(BacktestResult)
@@ -376,14 +376,19 @@ def read_report(db):
             )
         )
     )
-    current_fingerprints = {
-        rule.id: definition_fingerprint(rule_snapshot(rule))
+    current_rules = {
+        rule.id: rule
         for rule in db.scalars(
             select(WatchRule)
             .options(selectinload(WatchRule.conditions))
             .where(WatchRule.id.in_({row.rule_id for row in rows}))
         )
     }
+    current_fingerprints = {
+        rule_id: definition_fingerprint(rule_snapshot(rule))
+        for rule_id, rule in current_rules.items()
+    }
+    rerun_rule_ids, changed_rule_ids = set(), set()
     stocks, grouped = [], {}
     for row in rows:
         stale = row.stale or row.batch_id != task.batch_id
@@ -393,6 +398,10 @@ def read_report(db):
             not p.get("definitionFingerprint")
             or p["definitionFingerprint"] != current_fingerprints.get(row.rule_id)
         )
+        if stale or legacy or definition_changed:
+            rerun_rule_ids.add(row.rule_id)
+        if definition_changed:
+            changed_rule_ids.add(row.rule_id)
         stocks.append(
             dict(
                 id=row.id,
@@ -425,18 +434,20 @@ def read_report(db):
                 skippedSessions=p.get("skippedSessions", 0),
             )
         )
-        if not stale and not legacy and not definition_changed:
+        if not legacy:
             group = grouped.setdefault(
                 row.rule_id,
                 dict(
                     ruleId=row.rule_id,
                     ruleName=row.rule_name,
                     stockCount=0,
+                    stale=False,
                     actualStart=p["actualStart"],
                     actualEnd=p["actualEnd"],
                     trades=[],
                 ),
             )
+            group["stale"] |= stale or definition_changed
             group["stockCount"] += 1
             group["actualStart"] = min(group["actualStart"], p["actualStart"])
             group["actualEnd"] = max(group["actualEnd"], p["actualEnd"])
@@ -459,7 +470,21 @@ def read_report(db):
                 ),
             }
         )
+    changed_at = max(
+        (current_rules[rule_id].updated_at for rule_id in changed_rule_ids
+         if rule_id in current_rules and current_rules[rule_id].updated_at is not None),
+        default=None,
+    )
+    stale_info = (
+        dict(
+            reason="definition" if changed_rule_ids else "data",
+            changedAt=changed_at.replace(tzinfo=UTC).isoformat() if changed_at else None,
+            ruleIds=sorted(rerun_rule_ids),
+        )
+        if rerun_rule_ids else None
+    )
     return dict(
+        staleInfo=stale_info,
         task=dict(
             batchId=task.batch_id,
             status=task.status,

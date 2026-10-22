@@ -19,6 +19,10 @@ const states: Record<string, string> = {
   reentered: '再次符合',
   not_met: '未符合',
 }
+const taipeiTime = (value: string) => new Intl.DateTimeFormat('zh-TW', {
+  timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+}).format(new Date(value))
 const statusLabels = { closed: '已完成', open: '持有中', unfilled: '未成交' }
 const metricHeaders = ['交易次數', '淨勝率', '平均淨報酬', '淨複利報酬', '淨最大回撤', '淨獲利因子']
 function CostInfo({ costs }: { costs: CostSnapshot | null }) {
@@ -58,8 +62,9 @@ function TradeDetails({ stock, batch }: { stock: StockPerformance; batch: string
     <div className="card">
       <h2>
         {stock.ticker} {stock.stockName} · {stock.ruleName}
+        {(stock.stale || data?.stale) && <span className="stale-mark" title="以下為上次成功結果，已過期。">⚠</span>}
+        {needsRerun && <span className="stale-mark" title={rerunReason}>⚠</span>}
       </h2>
-      {stock.stale && <p className="backtest-warning">以下為上次成功結果，已過期。</p>}
       {detail.isLoading && <p>讀取明細…</p>}
       {detail.isError && (
         <p role="alert" className="error-text">
@@ -72,7 +77,6 @@ function TradeDetails({ stock, batch }: { stock: StockPerformance; batch: string
             成交價格統一還原至 {data.priceBasisDate}；共 {data.tradeTotal} 筆交易紀錄。
           </p>
           <CostInfo costs={data.costSnapshot} />
-          {needsRerun && <p className="backtest-warning">{rerunReason}</p>}
           {data.warnings.map((w) => <p key={w} className="backtest-warning">{w}</p>)}
           {data.benchmarkReason && <p className="muted">{data.benchmarkReason}</p>}
           <div className="table-scroll">
@@ -114,10 +118,10 @@ function TradeDetails({ stock, batch }: { stock: StockPerformance; batch: string
                       {price(t.exitPrice)}
                     </td>
                     <td>{t.holdingDays ?? '—'}</td>
-                    <td>{needsRerun ? rerunReason : percent(t.netReturnRate)}
+                    <td>{percent(t.netReturnRate)}{needsRerun && <span className="stale-mark" title={rerunReason}>⚠</span>}
                       <small>毛 {percent(data.needsRerun ? t.returnRate : t.grossReturnRate)}</small></td>
                     <td>
-                      {needsRerun ? rerunReason : percent(t.netUnrealizedReturn)}
+                      {percent(t.netUnrealizedReturn)}{needsRerun && <span className="stale-mark" title={rerunReason}>⚠</span>}
                       <small>毛 {percent(data.needsRerun ? t.unrealizedReturn : t.grossUnrealizedReturn)}</small>
                       {t.valuationDate && <small>估值日 {t.valuationDate}</small>}
                     </td>
@@ -186,6 +190,8 @@ export function BacktestPage() {
   })
   const active = (rules.data ?? []).filter((r) => r.isEnabled)
   const ids = (chosen ?? active.map((r) => r.id)).filter((id) => active.some((r) => r.id === id))
+  const staleInfo = report.data?.staleInfo
+  const staleRuleIds = (staleInfo?.ruleIds ?? []).filter((id) => active.some((r) => r.id === id))
   const task = report.data?.task
   const stocks = report.data?.stocks ?? []
   const visible = stocks
@@ -203,6 +209,20 @@ export function BacktestPage() {
   return (
     <section className="backtest-page">
       <PageHeader title="戰法回測" description="以最近三年的歷史訊號與模擬交易，檢視戰法表現。" />
+      {staleInfo && (
+        <div className="backtest-stale-banner" role="status">
+          <span>{staleInfo.reason === 'definition' && staleInfo.changedAt
+            ? `戰法定義已於 ${taipeiTime(staleInfo.changedAt)}（台北時間）變更，以下結果已過期。`
+            : '以下結果已過期，請重新回測。'}</span>
+          <button
+            className="button-primary"
+            disabled={running || start.isPending || !staleRuleIds.length}
+            onClick={() => start.mutate(staleRuleIds)}
+          >
+            立即重新回測
+          </button>
+        </div>
+      )}
       <div className="card">
         <fieldset disabled={running || start.isPending}>
           <legend>回測戰法</legend>
@@ -275,17 +295,17 @@ export function BacktestPage() {
           0050 為不扣成本的還原報酬，超額報酬為淨報酬減 0050。複利報酬與最大回撤僅依已完成交易計算，不含持倉期間浮動損益。跨股票複利僅供比較，不是實際投資組合績效。
         </p>
         <p>少於 10 筆已完成交易標示樣本不足；上市較晚或需較長指標暖機的股票，實際期間可能較短。</p>
-        <p>目前還原價格未涵蓋分割／減資；跨越這類事件的個股或 0050 基準可能失真。</p>
+        <p>還原價格已依證交所與櫃買中心公告的分割、減資事件調整。</p>
       </div>
       {task && (
         <>
           <div className="card">
             <h2>戰法整體績效</h2>
             <p className="muted">
-              僅統計本次成功股票；期間顯示最早至最晚日期，各股涵蓋長度可能不同。
+              統計下方個股結果，舊格式未含淨報酬者除外；期間顯示最早至最晚日期，各股涵蓋長度可能不同。
             </p>
             <div className="table-scroll">
-              <table className="data-table">
+              <table className={staleInfo ? 'data-table backtest-stale' : 'data-table'}>
                 <thead>
                   <tr>
                     <th>戰法／股票數</th>
@@ -301,6 +321,7 @@ export function BacktestPage() {
                     <tr key={r.ruleId}>
                       <td>
                         {r.ruleName}
+                        {r.stale && <span className="stale-mark" title="結果已過期，請重新回測。">⚠</span>}
                         <small>{r.stockCount} 檔</small>
                       </td>
                       <td>
@@ -315,7 +336,7 @@ export function BacktestPage() {
                 </tbody>
               </table>
             </div>
-            {!report.data?.overall.length && <p>本次尚無成功回測股票，不混入舊結果。</p>}
+            {report.data?.overall.length === 0 && <p>本次尚無成功回測股票。</p>}
           </div>
           <div className="card">
             <h2>個股績效</h2>
@@ -374,7 +395,7 @@ export function BacktestPage() {
               </label>
             </div>
             <div className="table-scroll">
-              <table className="data-table">
+              <table className={staleInfo ? 'data-table backtest-stale' : 'data-table'}>
                 <thead>
                   <tr>
                     <th>股票／戰法</th>
@@ -393,9 +414,9 @@ export function BacktestPage() {
                       <td>
                         {s.ticker} {s.stockName}
                         <small>{s.ruleName}</small>
-                        {s.needsRerun && <strong className="backtest-warning">{s.rerunReason ?? '需重新回測：以下舊報酬只代表毛報酬。'}</strong>}
+                        {s.needsRerun && <span className="stale-mark" title={s.rerunReason ?? '需重新回測：以下舊報酬只代表毛報酬。'}>⚠</span>}
                         {s.stale && (
-                          <strong className="backtest-warning">過期：上次成功結果</strong>
+                          <span className="stale-mark" title="過期：上次成功結果">⚠</span>
                         )}
                       </td>
                       <td>
