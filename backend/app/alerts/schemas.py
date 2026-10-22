@@ -13,6 +13,7 @@ class AlertMatchSchema(CamelModel):
     rule_name: str
     triggered_at: datetime
     price_at_trigger: float | None
+    state: str | None
 
 
 class NotifyAlertsRequest(CamelModel):

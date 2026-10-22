@@ -1,6 +1,8 @@
+import type { RuleEvaluationResult, WatchRule } from '../rules/types'
+import { RuleStateBadge, RuleStateLine } from '../rules/components/RuleStateBadge'
 import { PageHeader } from '../../components/PageHeader'
 import { useEffect, useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQueries, useQuery } from '@tanstack/react-query'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { apiClient } from '../../api/client'
 import type { StockInfo } from '../../lib/stockDirectory'
@@ -52,6 +54,22 @@ export function StockLookupPage() {
     queryKey: ['stock-profile', selectedTicker],
     queryFn: () => apiClient.get<StockInfo & { sector: string }>(`/stocks/${selectedTicker}`),
     enabled: Boolean(selectedTicker),
+  })
+
+  const rulesQuery = useQuery({
+    queryKey: ['rules'],
+    queryFn: () => apiClient.get<WatchRule[]>('/rules?limit=50'),
+  })
+  const enabledRules = (rulesQuery.data ?? []).filter((rule) => rule.isEnabled)
+  const ruleStates = useQueries({
+    queries: enabledRules.map((rule) => ({
+      queryKey: ['rule-state', rule.id, selectedTicker],
+      queryFn: () =>
+        apiClient.get<RuleEvaluationResult>(
+          `/rules/${rule.id}/evaluate?ticker=${encodeURIComponent(selectedTicker)}`,
+        ),
+      enabled: Boolean(selectedTicker),
+    })),
   })
 
   const chartQuery = useQuery({
@@ -123,6 +141,34 @@ export function StockLookupPage() {
               : profile.data?.sector || '未分類'}
         </span>
         <span className="muted">觀察族群分類，可在觀察清單編輯。</span>
+      </div>
+      <div className="card" aria-live="polite">
+        <h3>戰法狀態</h3>
+        {rulesQuery.isLoading && <p>判斷中…</p>}
+        {rulesQuery.isError && <p className="error-text">戰法狀態讀取失敗</p>}
+        {!selectedTicker && <p className="muted">請先選擇股票</p>}
+        {rulesQuery.isSuccess && !enabledRules.length && <p className="muted">尚無啟用中的戰法</p>}
+        {selectedTicker &&
+          enabledRules.map((rule, index) => {
+            const query = ruleStates[index]
+            const state = query.data?.state
+            return (
+              <div className="rule-result" key={rule.id}>
+                {query.isPending ? (
+                  <p>{rule.name}：判斷中…</p>
+                ) : query.isError ? (
+                  <p className="error-text">{rule.name}：戰法狀態讀取失敗</p>
+                ) : state ? (
+                  <>
+                    <RuleStateBadge ruleName={rule.name} state={state.state} />
+                    <RuleStateLine state={state} />
+                  </>
+                ) : (
+                  <p className="muted">{rule.name}：尚無戰法狀態</p>
+                )}
+              </div>
+            )
+          })}
       </div>
       <div className="card">
         <EmaToggle visibility={emaVisibility} onChange={setEmaVisibility} />

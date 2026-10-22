@@ -1,4 +1,6 @@
-import { outcome, OUTCOME_LABELS, type SavedEvaluation } from '../types'
+import type { SavedEvaluation } from '../types'
+import { STATE_LABELS } from '../../rules/state'
+import { RuleStateBadge, RuleStateLine } from '../../rules/components/RuleStateBadge'
 const ROLE_LABELS = { premise: '前提', entry: '進場', exit: '出場' }
 interface Props {
   results: SavedEvaluation[]
@@ -16,27 +18,18 @@ export function WatchlistEvaluationCell({
   error,
   onEvaluate,
 }: Props) {
-  const status = error ? 'error' : outcome(results, expected)
-  const matchedResults = results.filter((r) => !r.stale && r.result.isMet)
-  const passed = matchedResults.length
-  const visibleResults = passed ? matchedResults : results
-  const upperBandMarks = [...new Set(
-    visibleResults.filter((r) => !r.stale).flatMap((r) =>
-      r.result.conditionResults.flatMap((c) => c.upperBandStatus ? [c.upperBandStatus] : []),
+  const upperBandMarks = [
+    ...new Set(
+      results
+        .filter((r) => r.state !== 'STALE')
+        .flatMap((r) =>
+          r.result.conditionResults.flatMap((c) => (c.upperBandStatus ? [c.upperBandStatus] : [])),
+        ),
     ),
-  )]
-  const unresolved = results.filter(
-    (r) => r.result.status === 'error' || r.result.status === 'insufficient_data',
-  ).length
+  ]
   return (
     <div className="evaluation-cell" aria-live="polite">
       <div className="evaluation-actions">
-        <strong className={`evaluation-badge evaluation-badge--${busy ? 'pending' : status}`}>
-          <span aria-hidden="true">
-            {busy ? '…' : status === 'exit' ? '↓' : status === 'matched' ? '✓' : status === 'not_met' ? '×' : '!'}
-          </span>
-          {busy ? '更新行情並評估中' : OUTCOME_LABELS[status]}
-        </strong>
         <button
           className="button-secondary"
           type="button"
@@ -46,47 +39,29 @@ export function WatchlistEvaluationCell({
           {results.length ? '重新評估' : '評估'}
         </button>
       </div>
-      {!busy && !error && results.filter((r) => !r.stale).map((r) => {
-        const stop = r.result.protectiveStop
-        const exitReasons = r.result.exitTriggered === true
-          ? r.result.conditionResults.filter((c) => c.role === 'exit' && c.isMet)
-          : []
-        if (!stop && !exitReasons.length) return null
-        return (
-          <div className="stop-price-info" key={r.ruleId}>
-            {exitReasons.map((c, i) => (
-              <strong className="exit-reason" key={i}>
-                {r.ruleName} · 該出場：{c.reason}
-              </strong>
-            ))}
-            {stop && (
-              <span className="stop-price-mark">
-                {r.ruleName} · 觸價 {stop.price} · 月線 {Number(stop.ma.toFixed(1))} · {stop.buffer !== undefined && stop.buffer > 0
-                  ? `月線下 ${stop.buffer * 100}% 再下 ${stop.ticks} tick`
-                  : `中軌下 ${stop.ticks} tick`}
-                {stop.close !== null && stop.close < stop.price && (
-                  <> · <strong className="stop-price-mark--below">已低於觸價</strong></>
-                )}
-              </span>
+      {busy && <span role="status">更新行情並評估中…</span>}
+      {!results.length && <span className="muted">尚未評估</span>}
+      <div className="rule-state-list">
+        {results.map((r) => (
+          <div className="rule-state-item" key={r.ruleId}>
+            <RuleStateBadge ruleName={r.ruleName} state={r.state} />
+            {r.state === 'STALE' ? (
+              <p className="stale-notice">行情或戰法已更新，請重新評估</p>
+            ) : r.result.state ? (
+              <RuleStateLine state={{ ...r.result.state, state: r.state }} />
+            ) : (
+              <p className="muted">{STATE_LABELS[r.state]}：尚無狀態說明</p>
             )}
           </div>
-        )
-      })}
-      {!busy && !error && upperBandMarks.map((mark) => (
-        <span className="upper-band-mark" key={mark}>
-          {mark === 'breakout' ? '突破上軌' : '觸及上軌'} · 壓力參考
-        </span>
-      ))}
-      {!!results.length && (
-        <span className="muted">
-          {passed}／{expected} 條通過
-          {results.length < expected ? ` · ${expected - results.length} 條未評估` : ''}
-          {unresolved ? ` · ${unresolved} 條待確認` : ''}
-        </span>
-      )}
-      {status === 'stale' && (
-        <span className="stale-notice">行情或戰法已更新，以下為上次結果。</span>
-      )}
+        ))}
+      </div>
+      {!busy &&
+        !error &&
+        upperBandMarks.map((mark) => (
+          <span className="upper-band-mark" key={mark}>
+            {mark === 'breakout' ? '突破上軌' : '觸及上軌'} · 壓力參考
+          </span>
+        ))}
       {error && (
         <p className="error-text" role="alert">
           {error}
@@ -97,12 +72,12 @@ export function WatchlistEvaluationCell({
       )}
       {!!results.length && (
         <details className="evaluation-details">
-          <summary>{passed ? '通過戰法與評估時間' : '戰法結果與評估時間'}</summary>
-          {visibleResults.map((r) => (
+          <summary>戰法結果與評估時間</summary>
+          {results.map((r) => (
             <div className="rule-result" key={r.ruleId}>
               <strong>
-                {r.ruleName} · {OUTCOME_LABELS[r.result.status]}
-                {r.stale ? '（舊結果）' : ''}
+                {r.ruleName} · {STATE_LABELS[r.state]}
+                {r.state === 'STALE' ? '（舊結果）' : ''}
               </strong>
               <p className="muted">
                 行情：{r.result.dataDate ?? '無資料'} · 評估：
@@ -110,7 +85,10 @@ export function WatchlistEvaluationCell({
               </p>
               <ul>
                 {r.result.conditionResults.map((c, i) => (
-                  <li key={i}>{c.role ? `${ROLE_LABELS[c.role]}：` : ''}{c.reason}</li>
+                  <li key={i}>
+                    {c.role ? `${ROLE_LABELS[c.role]}：` : ''}
+                    {c.reason}
+                  </li>
                 ))}
               </ul>
             </div>

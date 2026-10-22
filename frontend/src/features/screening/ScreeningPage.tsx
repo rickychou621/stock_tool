@@ -1,3 +1,4 @@
+import { RuleStateBadge } from '../rules/components/RuleStateBadge'
 import { PageHeader } from '../../components/PageHeader'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
@@ -89,7 +90,8 @@ export function ScreeningPage() {
           {notifyMutation.isPending ? '發送中…' : `通知 Telegram（${pendingStocks} 檔）`}
         </button>
         <p className="muted">
-          只通知本次符合戰法的個股，每則訊息最多彙整 50 筆，文字較長時會分段。同股不同戰法各算一筆，今天已通知的戰法不重送。
+          只通知本次符合戰法的個股，每則訊息最多彙整 50
+          筆，文字較長時會分段。同股不同戰法各算一筆，今天已通知的戰法不重送。
         </p>
         {scanMutation.isError && (
           <p role="alert" className="error-text">
@@ -167,7 +169,11 @@ export function ScreeningPage() {
                         </Link>
                       </td>
                       <td>
-                        {item.ruleName}
+                        {item.state ? (
+                          <RuleStateBadge ruleName={item.ruleName} state={item.state} />
+                        ) : (
+                          item.ruleName
+                        )}
                         <details>
                           <summary>符合原因</summary>
                           <ul>

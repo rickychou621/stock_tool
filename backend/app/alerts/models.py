@@ -18,3 +18,4 @@ class AlertLog(Base):
     price_at_trigger: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     message: Mapped[str] = mapped_column(Text, default="")
     is_notified: Mapped[bool] = mapped_column(Boolean, default=False)
+    state: Mapped[str | None] = mapped_column(String(16), nullable=True)

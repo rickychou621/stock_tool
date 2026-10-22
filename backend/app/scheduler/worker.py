@@ -11,16 +11,14 @@ from app.market_data.models import Stock
 from app.market_data.repository import MarketDataRepository
 from app.market_data.service import MarketDataService
 from app.market_data.validation import is_no_trade
-from app.market_scan.models import MarketInstrument
-from app.rules.evaluation import RuleEvaluationService, missing_friday_result
-from app.rules.frequency import last_evaluation_day
 from app.rules.models import WatchRule
 from app.rules.preparation import history_days
+from app.rules.protective_stop import protective_stop
 from app.rules.schemas import RuleEvaluationSchema
+from app.rules.state import evaluate_with_state, instrument_kind
 from app.scheduler.service import utcnow
 from app.watchlist.evaluation import fingerprint
 from app.watchlist.models import HoldingsWatchlist, WatchlistEvaluation
-from app.watchlist.protective_stop import protective_stop
 
 
 def validate_bars(bars, day: date):
@@ -87,24 +85,15 @@ def process_stock(session_factory, item_id: int, ticker: str, rule_ids: list[int
             db.rollback()
             invalidate(db, item_id, rule_ids)
             return failures + [f"行情更新／驗證失敗：{exc}"]
-        kind = db.scalar(
-            select(MarketInstrument.kind).where(MarketInstrument.ticker == ticker)
-        ) or "stock"
+        kind = instrument_kind(db, ticker)
         version = stock.data_version
-        weekly_cutoff = last_evaluation_day(
-            bars[-1].trade_date, [b.trade_date for b in bars], "weekly"
-        )
         for rule in available:
             try:
-                missing_friday = rule.evaluation_frequency == "weekly" and weekly_cutoff is None
-                if rule.evaluation_frequency == "weekly":
-                    result = (
-                        missing_friday_result(rule, ticker)
-                        if missing_friday
-                        else RuleEvaluationService(db).evaluate(rule, ticker, cutoff=weekly_cutoff)
-                    )
-                else:
-                    result = RuleEvaluationService(db).evaluate(rule, ticker)
+                result, state = evaluate_with_state(db, rule, ticker, kind=kind)
+                # Only missing_friday_result() has no data date; real evaluations always do.
+                missing_friday = (
+                    rule.evaluation_frequency == "weekly" and result.data_date is None
+                )
                 if not missing_friday and (
                     result.status in ("error", "insufficient_data")
                     or any(not c.data_sufficient for c in result.condition_results)
@@ -120,7 +109,8 @@ def process_stock(session_factory, item_id: int, ticker: str, rule_ids: list[int
                     saved = WatchlistEvaluation(item_id=item_id, rule_id=rule.id)
                     db.add(saved)
                 saved.result = RuleEvaluationSchema(
-                    **asdict(result), protective_stop=protective_stop(result, kind)
+                    **asdict(result), state=asdict(state),
+                    protective_stop=protective_stop(result, kind)
                 ).model_dump(mode="json", by_alias=True)
                 saved.data_version = version
                 saved.rule_fingerprint = fingerprint(rule)

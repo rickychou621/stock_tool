@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.rules.evaluation import ConditionEvaluation
-from app.watchlist.protective_stop import protective_stop
+from app.rules.protective_stop import protective_stop
 
 
 def result(*conditions):

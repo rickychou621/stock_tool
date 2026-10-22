@@ -1,7 +1,8 @@
+import { mostUrgent } from '../../rules/state'
 import { Fragment, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getStockName } from '../../../lib/stockDirectory'
-import { outcome, type SavedEvaluation, type WatchlistEdit, type WatchlistItem } from '../types'
+import { type SavedEvaluation, type WatchlistEdit, type WatchlistItem } from '../types'
 import { WatchlistEvaluationCell } from './WatchlistEvaluationCell'
 import { EditWatchlistForm } from './EditWatchlistForm'
 interface Props {
@@ -45,11 +46,11 @@ export function WatchlistTable({
             const results = evaluations.filter(
               (r) => r.itemId === item.id && ruleIds.includes(r.ruleId),
             )
-            const status = errors[item.id] ? 'error' : outcome(results, ruleIds.length)
+            const status = mostUrgent(results.map((r) => r.state))
             return (
               <Fragment key={item.id}>
                 <tr
-                  className={`evaluation-row evaluation-row--${busyItem === item.id ? 'pending' : status}`}
+                  className={`evaluation-row evaluation-row--${busyItem === item.id ? 'pending' : (status?.toLowerCase() ?? 'pending')}`}
                 >
                   <td>
                     <Link

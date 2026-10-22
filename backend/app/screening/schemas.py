@@ -19,6 +19,7 @@ class ScanMatchSchema(CamelModel):
     data_date: date | None
     is_notified: bool
     reasons: list[str]
+    state: str
 
 
 class ScanIssueSchema(CamelModel):

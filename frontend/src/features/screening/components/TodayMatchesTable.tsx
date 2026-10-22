@@ -1,3 +1,4 @@
+import { RuleStateBadge } from '../../rules/components/RuleStateBadge'
 import { Link } from 'react-router-dom'
 import { AddToWatchlistButton } from '../../watchlist/components/AddToWatchlistButton'
 import { getStockName } from '../../../lib/stockDirectory'
@@ -34,7 +35,13 @@ export function TodayMatchesTable({ items }: TodayMatchesTableProps) {
                 </Link>
               </td>
               <td>{getStockName(item.ticker)}</td>
-              <td>{item.ruleName}</td>
+              <td>
+                {item.state ? (
+                  <RuleStateBadge ruleName={item.ruleName} state={item.state} />
+                ) : (
+                  item.ruleName
+                )}
+              </td>
               <td>{item.triggeredAt}</td>
               <td>{item.priceAtTrigger}</td>
               <td>

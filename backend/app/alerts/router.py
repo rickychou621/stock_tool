@@ -23,6 +23,7 @@ def list_alerts(
     return [
         AlertMatchSchema(
             id=alert.id,
+            state=alert.state,
             ticker=alert.ticker,
             rule_name=rule_name,
             triggered_at=alert.triggered_at,

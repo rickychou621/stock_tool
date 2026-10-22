@@ -1,3 +1,5 @@
+import type { RuleStateCode } from '../rules/state'
+
 export interface CandidateStock {
   ticker: string
   reason: string
@@ -6,6 +8,7 @@ export interface CandidateStock {
 
 // 已真的觸發規則(AND/OR條件都成立)的股票，跟候選池(還在盯盤、尚未觸發)是不同階段。
 export interface TodayMatchItem {
+  state: RuleStateCode | null
   id: number
   ticker: string
   ruleName: string
@@ -29,6 +32,7 @@ export interface CandidateRefreshSummary {
 }
 
 export interface ScanMatch {
+  state: RuleStateCode
   id: number
   ticker: string
   ruleName: string

@@ -18,8 +18,10 @@ def messages(items, *, failed=0) -> list[str]:
     rows = sorted(
         (
             item for item in items
-            if item[3].get("exitTriggered") is True
-            or item[3].get("protectiveStop") is not None
+            if item[3].get("state") and (
+                item[3]["state"]["state"] == "EXIT"
+                or item[3].get("protectiveStop") is not None
+            )
         ),
         key=lambda item: (item[0], item[2]),
     )
@@ -27,15 +29,17 @@ def messages(items, *, failed=0) -> list[str]:
         return []
     dates = [row[3]["dataDate"] for row in rows if row[3].get("dataDate")]
     day = max(dates)[5:10].replace("-", "/") if dates else "—"
-    exited = [row for row in rows if row[3].get("exitTriggered") is True]
-    pending = [row for row in rows if row[3].get("exitTriggered") is not True]
+    exited = [row for row in rows if row[3]["state"]["state"] == "EXIT"]
+    near = [row for row in rows if row[3]["state"]["state"] == "NEAR_EXIT"]
+    pending = [row for row in rows if row[3]["state"]["state"] not in ("EXIT", "NEAR_EXIT")]
     lines = [f"觀察清單｜{day} 收盤｜{len({row[0] for row in rows})} 檔"]
     lines.append(
         f"【出場訊號】{len({row[0] for row in exited})} 檔" if exited else "【出場訊號】今日無"
     )
-    for group, is_exit in ((exited, True), (pending, False)):
-        if not is_exit:
-            lines.append(f"【明日觸價價位】{len({row[0] for row in pending})} 檔")
+    for group, label in ((exited, "出場訊號"), (near, "接近出場"), (pending, "明日觸價價位")):
+        is_exit = label == "出場訊號"
+        if not is_exit and (group or label == "明日觸價價位"):
+            lines.append(f"【{label}】{len({row[0] for row in group})} 檔")
         for ticker, name, rule_name, result in group:
             stop = result.get("protectiveStop")
             conditions = result.get("conditionResults", [])
@@ -64,6 +68,8 @@ def messages(items, *, failed=0) -> list[str]:
                 # A stop order at this price would fire at tomorrow's open.
                 if close is not None and Decimal(str(close)) < Decimal(str(stop["price"])):
                     parts.append("已低於觸價")
+                if label == "接近出場":
+                    parts.append(f"距觸價 {result['state']['distancePct']:.1f}%")
             # Keep a pathological reason/name from exceeding Telegram's single-page budget.
             lines.append(_shorten("｜".join(parts).replace("\n", " ").replace("\r", " "), 3900))
     if failed > 0:

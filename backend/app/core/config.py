@@ -39,6 +39,8 @@ class Settings(BaseSettings):
         default=10_000_000, ge=0, allow_inf_nan=False
     )
 
+    near_exit_pct: float = Field(default=0.03, gt=0, lt=1, allow_inf_nan=False)
+
     signal_tracking_horizons: str = "1,5,10,20"
 
     @field_validator("signal_tracking_horizons")

@@ -141,14 +141,20 @@ def test_snapshot_roundtrip_and_legacy_restore():
 
 def test_evaluation_api_serializes_role_fields(monkeypatch):
     from app.rules.router import evaluate_rule
+    from app.rules.state import RuleState
 
     strategy = rule([condition(True), condition(False, "entry"), condition(True, "exit")])
     monkeypatch.setattr("app.rules.router.RuleRepository.get", lambda self, rule_id: strategy)
     monkeypatch.setattr(
-        "app.rules.router.RuleEvaluationService.evaluate",
-        lambda self, rule, ticker: RuleEvaluationService.evaluate_bars(rule, ticker, []),
+        "app.rules.router.evaluate_with_state",
+        lambda db, rule, ticker, **kwargs: (
+            RuleEvaluationService.evaluate_bars(rule, ticker, []),
+            RuleState("EXIT", "exit reason", None, None, None),
+        ),
     )
+    monkeypatch.setattr("app.rules.router.instrument_kind", lambda db, ticker: "stock")
     payload = evaluate_rule(1, "TEST", None).model_dump(by_alias=True)
+    assert payload["state"]["state"] == "EXIT"
     assert payload["isMet"] is payload["premiseMet"] is True
     assert payload["entryTriggered"] is False
     assert payload["exitTriggered"] is True

@@ -45,7 +45,16 @@ class ConditionEvaluationSchema(CamelModel):
     upper_band_status: Literal["touched", "breakout"] | None = None
 
 
+class RuleStateSchema(CamelModel):
+    state: Literal["ENTRY", "HOLD", "NEAR_EXIT", "EXIT", "NONE", "NO_DATA", "STALE"]
+    reason: str
+    trigger_price: float | None
+    close: float | None
+    distance_pct: float | None
+
+
 class RuleEvaluationSchema(CamelModel):
+    state: RuleStateSchema | None = None
     premise_met: bool
     entry_triggered: bool | None
     exit_triggered: bool | None

@@ -1,3 +1,5 @@
+import type { RuleStateDetail } from './state'
+
 export type LogicOperator = 'AND' | 'OR'
 
 export interface RuleCondition {
@@ -31,6 +33,7 @@ export interface ConditionEvaluation {
 }
 
 export interface RuleEvaluationResult {
+  state?: RuleStateDetail | null
   premiseMet?: boolean
   entryTriggered?: boolean | null
   exitTriggered?: boolean | null

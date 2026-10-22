@@ -1,3 +1,4 @@
+import { mostUrgent, STATE_LABELS, STATE_URGENCY, type RuleStateCode } from '../rules/state'
 import { useState } from 'react'
 import { PageHeader } from '../../components/PageHeader'
 import { Link, useSearchParams } from 'react-router-dom'
@@ -8,9 +9,6 @@ import { WatchlistSchedule } from './components/WatchlistSchedule'
 import { WatchlistTable } from './components/WatchlistTable'
 import { AddWatchlistForm } from './components/AddWatchlistForm'
 import {
-  outcome,
-  OUTCOME_LABELS,
-  type Outcome,
   type SavedEvaluation,
   type WatchlistEdit,
   type WatchlistInput,
@@ -26,9 +24,9 @@ const EMPTY_OPERATION: Operation = { busy: false, busyItem: null, progress: '', 
 export function WatchlistPage() {
   const client = useQueryClient()
   const [params, setParams] = useSearchParams()
-  const [filter, setFilter] = useState<Outcome | 'all'>('all')
+  const [filter, setFilter] = useState<RuleStateCode | 'all'>('all')
   const [sector, setSector] = useState('all')
-  const [sort, setSort] = useState('original')
+  const [sort, setSort] = useState('urgent')
   const operation = useQuery<Operation>({
     queryKey: ['watchlist-operation-v2'],
     queryFn: async () => EMPTY_OPERATION,
@@ -64,16 +62,24 @@ export function WatchlistPage() {
   const evaluations = saved.data ?? []
   const resultsFor = (item: WatchlistItem) =>
     evaluations.filter((r) => r.itemId === item.id && ruleIds.includes(r.ruleId))
-  const statusFor = (item: WatchlistItem) =>
-    errors[item.id] ? 'error' : outcome(resultsFor(item), ruleIds.length)
+  const statusFor = (item: WatchlistItem) => mostUrgent(resultsFor(item).map((r) => r.state))
   const visible = items.filter(
     (i) =>
       (sector === 'all' || (i.sector || '未分類') === sector) &&
       (filter === 'all' || statusFor(i) === filter),
   )
-  if (sort === 'passed') {
-    const priority = (status: Outcome) => status === 'exit' ? 2 : status === 'matched' ? 1 : 0
-    visible.sort((a, b) => priority(statusFor(b)) - priority(statusFor(a)))
+  const stateCodes = (Object.keys(STATE_URGENCY) as RuleStateCode[]).sort(
+    (a, b) => STATE_URGENCY[a] - STATE_URGENCY[b],
+  )
+  const counts = Object.fromEntries(
+    stateCodes.map((state) => [state, items.filter((item) => statusFor(item) === state).length]),
+  )
+  if (sort === 'urgent') {
+    const priority = (item: WatchlistItem) => {
+      const state = statusFor(item)
+      return state === null ? 7 : STATE_URGENCY[state]
+    }
+    visible.sort((a, b) => priority(a) - priority(b))
   }
   if (sort === 'ticker') visible.sort((a, b) => a.ticker.localeCompare(b.ticker))
   async function evaluate(targets: WatchlistItem[]) {
@@ -139,7 +145,7 @@ export function WatchlistPage() {
     (i) =>
       ruleIds.length > 0 &&
       resultsFor(i).length === ruleIds.length &&
-      resultsFor(i).every((r) => !r.stale && ['matched', 'not_met'].includes(r.result.status)),
+      resultsFor(i).every((r) => !['STALE', 'NO_DATA'].includes(r.state)),
   ).length
   return (
     <section>
@@ -164,11 +170,11 @@ export function WatchlistPage() {
           </strong>
         </div>
         <div className="overview-tile">
-          <span>至少通過一條戰法</span>
+          <span>整體狀態為進場</span>
           <strong>
             {saved.isLoading || saved.isError
               ? '—'
-              : items.filter((i) => statusFor(i) === 'matched').length}
+              : items.filter((i) => statusFor(i) === 'ENTRY').length}
             <small> 檔</small>
           </strong>
         </div>
@@ -208,22 +214,30 @@ export function WatchlistPage() {
             {progress}
           </p>
         )}
+        <div className="state-counts" aria-label="股票狀態計數">
+          {stateCodes.map((state) => (
+            <button
+              key={state}
+              type="button"
+              aria-pressed={filter === state}
+              onClick={() => setFilter(state)}
+            >
+              {STATE_LABELS[state]} {saved.isLoading || saved.isError ? '—' : counts[state]}
+            </button>
+          ))}
+        </div>
         <div className="filter-bar">
           <label className="field">
             評估結果
             <select
               aria-label="評估結果"
               value={filter}
-              onChange={(e) => setFilter(e.target.value as Outcome | 'all')}
+              onChange={(e) => setFilter(e.target.value as RuleStateCode | 'all')}
             >
               <option value="all">全部結果</option>
-              {Object.entries(OUTCOME_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {value === 'matched'
-                    ? '至少通過一條'
-                    : value === 'not_met'
-                      ? '全部未通過'
-                      : label}
+              {stateCodes.map((state) => (
+                <option key={state} value={state}>
+                  {STATE_LABELS[state]}
                 </option>
               ))}
             </select>
@@ -241,7 +255,7 @@ export function WatchlistPage() {
             排序
             <select aria-label="排序" value={sort} onChange={(e) => setSort(e.target.value)}>
               <option value="original">加入順序</option>
-              <option value="passed">通過優先</option>
+              <option value="urgent">緊急優先</option>
               <option value="ticker">股票代號</option>
             </select>
           </label>
@@ -250,7 +264,7 @@ export function WatchlistPage() {
             onClick={() => {
               setFilter('all')
               setSector('all')
-              setSort('original')
+              setSort('urgent')
             }}
           >
             清除篩選
@@ -258,7 +272,7 @@ export function WatchlistPage() {
         </div>
         <p className="muted">
           顯示 {visible.length}／{items.length}{' '}
-          檔。通過代表至少一條符合；全部未通過需所選戰法皆完成判斷。舊結果另列為需重新評估。
+          檔。整體狀態取所選戰法中最緊急的狀態；尚無結果顯示尚未評估，舊結果依後端標示為需重新評估。
         </p>
         {(watchlist.isLoading || saved.isLoading) && <p role="status">讀取清單與上次結果…</p>}
         {(watchlist.isError || saved.isError) && (

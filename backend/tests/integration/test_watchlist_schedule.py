@@ -487,16 +487,21 @@ def test_protective_stop_saved_for_both_evaluation_paths(factory, monkeypatch, p
             if path == "manual":
                 response = client.post("/watchlist/1/evaluate", json={"ruleIds": [1, 3]})
                 assert response.status_code == 200
-                assert {row["ruleId"]: row["result"] for row in response.json()} == expected
             else:
                 assert process_stock(factory, 1, "2330", [1, 3], DAY) == []
             response = client.get("/watchlist/evaluations")
             assert response.status_code == 200
-            assert {row["ruleId"]: row["result"] for row in response.json()} == expected
+            actual = {row["ruleId"]: row["result"] for row in response.json()}
+            for result in actual.values():
+                assert result.pop("state")["state"] in ("NONE", "EXIT")
+            for result in expected.values():
+                result.pop("state", None)
+            assert actual == expected
         assert len(queries) == 1  # One kind lookup for the ticker, across both rules.
         with factory() as db:
             assert {
-                row.rule_id: row.result for row in db.scalars(select(WatchlistEvaluation))
+                row.rule_id: {k: v for k, v in row.result.items() if k != "state"}
+                for row in db.scalars(select(WatchlistEvaluation))
             } == expected
         assert expected[1]["protectiveStop"] is None
     finally:
@@ -510,6 +515,7 @@ def seed_notification(factory):
         for saved in db.scalars(select(WatchlistEvaluation)):
             saved.result = {
                 "dataDate": "2026-10-12", "exitTriggered": False,
+                "state": {"state": "HOLD"},
                 "protectiveStop": {
                     "close": 296, "price": 277.5, "ma": 279.3, "tick": 0.5, "ticks": 3,
                 },
@@ -788,7 +794,101 @@ def test_frequency_cutoff_saved_by_both_paths(factory, monkeypatch, path, freque
             assert saved.result["conditionResults"][0]["reason"] == "尚無週五判斷資料"
             assert saved.data_version == db.scalar(select(Stock)).data_version
         else:
-            assert saved.result == expected
+            assert saved.result["state"]["state"] == (
+                "NONE" if frequency == "weekly" else "ENTRY"
+            )
+            expected.pop("state", None)
+            assert {k: v for k, v in saved.result.items() if k != "state"} == expected
             assert saved.result["dataDate"] == (
                 wednesday if frequency == "daily" else friday
             ).isoformat()
+
+
+@pytest.mark.parametrize("no_friday", [False, True])
+def test_weekly_api_and_watchlist_share_state(factory, monkeypatch, no_friday):
+    from app.market_data.repository import MarketDataRepository
+    from app.watchlist.evaluation import WatchlistEvaluationService
+
+    seed_bars(factory, count=3 if no_friday else 35, latest=date(2026, 10, 21))
+    monkeypatch.setattr(MarketDataService, "sync_daily_prices", Mock(return_value=35))
+    with factory() as db:
+        rule = db.get(WatchRule, 1)
+        rule.evaluation_frequency = "weekly"
+        rule.conditions[0].params = {"lookback": 1, "multiplier": 2}
+        MarketDataRepository(db).get_all_bars("2330")[-1].volume = 10000
+        db.commit()
+        saved = WatchlistEvaluationService(db).evaluate(db.get(HoldingsWatchlist, 1), [1])[0]
+
+    def dependency():
+        with factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = dependency
+    try:
+        with TestClient(app) as client:
+            response = client.get("/rules/1/evaluate", params={"ticker": "2330"})
+        assert response.status_code == 200
+        assert response.json()["state"] == saved.result["state"]
+        assert saved.state == ("NO_DATA" if no_friday else "NONE")
+        assert response.json()["dataDate"] == (None if no_friday else "2026-10-16")
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.parametrize("case", ["current", "data", "rule", "legacy"])
+def test_list_saved_state_marks_stale_and_legacy(factory, case):
+    from app.watchlist.evaluation import WatchlistEvaluationService
+
+    seed_saved(factory)
+    with factory() as db:
+        saved = db.scalar(select(WatchlistEvaluation).where(WatchlistEvaluation.rule_id == 1))
+        if case != "legacy":
+            saved.result = {"state": {"state": "EXIT"}}
+        if case == "data":
+            saved.data_version = -1
+        if case == "rule":
+            saved.rule_fingerprint = "old"
+        db.commit()
+        result = next(r for r in WatchlistEvaluationService(db).list_saved() if r.rule_id == 1)
+        assert result.state == ("EXIT" if case == "current" else "STALE")
+        assert result.stale == (case in ("data", "rule"))
+
+
+@pytest.mark.parametrize("exited", [False, True])
+def test_scan_state_filters_and_persists_alerts(factory, exited):
+    from app.alerts.models import AlertLog
+    from app.alerts.router import list_alerts
+    from app.screening.scan_service import ScreeningScanService
+
+    seed_bars(factory)
+    with factory() as db:
+        if exited:
+            rule = db.get(WatchRule, 1)
+            rule.conditions.append(WatchRuleCondition(
+                condition_id="close_below_ma_days", role="exit",
+                params={"period": 2, "days": 1}, sort_order=1,
+            ))
+            bar = db.scalar(select(StockPriceDaily).order_by(StockPriceDaily.trade_date.desc()))
+            bar.close = bar.adj_close = 95
+            db.commit()
+        summary = ScreeningScanService(db).run_scan()
+        assert summary.new_alerts == int(exited)
+        assert len(summary.matches) == int(exited)
+        alerts = list_alerts(limit=50, ticker=None, today_only=True, db=db)
+        assert len(alerts) == int(exited)
+        if exited:
+            assert summary.matches[0].state == alerts[0].state == "EXIT"
+            alert = db.get(AlertLog, alerts[0].id)
+            alert.state = "HOLD"
+            alert.message = "old"
+            db.commit()
+            assert ScreeningScanService(db).run_scan().new_alerts == 0
+            db.refresh(alert)
+            assert alert.state == "EXIT" and alert.message != "old"
+            alert.is_notified = True
+            alert.state = "HOLD"
+            alert.message = "sent"
+            db.commit()
+            ScreeningScanService(db).run_scan()
+            db.refresh(alert)
+            assert alert.state == "HOLD" and alert.message == "sent"

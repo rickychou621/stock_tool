@@ -4,6 +4,7 @@ from app.watchlist.notification import messages
 def result(*, exited=False, close=296, ma=279.3, price=277.5, day="2026-10-20"):
     return {
         "exitTriggered": exited,
+        "state": {"state": "EXIT" if exited else "HOLD"},
         "dataDate": day,
         # Same shape as a saved evaluation: no condition indicators, close inside protectiveStop.
         "protectiveStop": {"close": close, "price": price, "ma": ma, "tick": 0.5, "ticks": 3},
@@ -100,6 +101,7 @@ def test_close_below_stop_is_marked():
 def test_rule_three_exit_without_price():
     evaluation = {
         "exitTriggered": True,
+        "state": {"state": "EXIT"},
         "dataDate": "2026-10-20",
         "protectiveStop": None,
         "conditionResults": [
@@ -119,6 +121,8 @@ def test_rule_three_exit_without_price():
     del evaluation["protectiveStop"]
     assert messages([item]) == expected
     evaluation["exitTriggered"] = False
+    assert messages([item]) == expected
+    evaluation["state"]["state"] = "NONE"
     assert messages([item]) == []
 
 
@@ -134,3 +138,17 @@ def test_mixed_rules_count_tickers_separately_in_each_section():
     assert "【出場訊號】1 檔" in text
     assert "【明日觸價價位】1 檔" in text
     assert text.count("2330 台積電") == 3
+
+def test_near_exit_group_and_legacy_results():
+    near = result(exited=True, close=280)
+    near["state"] = {"state": "NEAR_EXIT", "distancePct": 0.9}
+    legacy = result(exited=True)
+    del legacy["state"]
+    text = messages([
+        ("2330", "台積電", "戰法二", near),
+        ("1303", "南亞", "舊戰法", legacy),
+    ])[0]
+    assert "【出場訊號】今日無" in text
+    assert "【接近出場】1 檔" in text
+    assert "2330 台積電｜觸價 277.5｜月線 279.3｜收 280｜距觸價 0.9%" in text
+    assert "南亞" not in text

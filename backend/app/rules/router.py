@@ -1,8 +1,9 @@
+from dataclasses import asdict
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db
-from app.rules.evaluation import RuleEvaluationService
 from app.rules.models import WatchRule
 from app.rules.preparation import EvaluationPreparationService, PreparationError
 from app.rules.repository import RuleRepository
@@ -14,6 +15,7 @@ from app.rules.schemas import (
     WatchRuleSchema,
 )
 from app.rules.service import RuleDeletionBlockedError, RuleService
+from app.rules.state import evaluate_with_state, instrument_kind
 
 router = APIRouter(prefix="/rules", tags=["rules"])
 
@@ -76,14 +78,14 @@ def evaluate_rule(
     ticker: str,
     db: Session = Depends(get_db),
 ) -> RuleEvaluationSchema:
-    """對外的「算現在符不符合」接口。排程之後要跑同一套判斷時，
-    直接呼叫 RuleEvaluationService(db).evaluate(rule, ticker) 就好，不用重寫邏輯。"""
+    """使用共用入口評估目前戰法狀態。"""
     rule = RuleRepository(db).get(rule_id)
     if rule is None:
         raise HTTPException(status_code=404, detail="Rule not found")
 
-    result = RuleEvaluationService(db).evaluate(rule, ticker)
+    result, state = evaluate_with_state(db, rule, ticker, kind=instrument_kind(db, ticker))
     return RuleEvaluationSchema(
+        state=asdict(state),
         rule_id=result.rule_id,
         ticker=result.ticker,
         is_met=result.is_met,

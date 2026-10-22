@@ -48,3 +48,4 @@ class SavedEvaluationSchema(CamelModel):
     result: dict
     evaluated_at: datetime
     stale: bool
+    state: str

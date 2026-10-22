@@ -158,6 +158,7 @@
 | `price_at_trigger` | DECIMAL(10,2) | 觸發當下價位 |
 | `message` | TEXT | 推播給Telegram的實際訊息內容 |
 | `is_notified` | BOOLEAN | 是否已成功推播(可用於重試機制) |
+| `state` | VARCHAR(16) NULL | 共用戰法狀態；舊紀錄為 NULL |
 
 索引:`INDEX (ticker, triggered_at)`、`INDEX (rule_id, triggered_at)`,供查詢歷史與防重複發送判斷使用。
 

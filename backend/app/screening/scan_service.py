@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 from app.alerts.models import AlertLog
 from app.alerts.repository import AlertRepository
 from app.market_data.repository import MarketDataRepository
-from app.rules.evaluation import RuleEvaluationService
 from app.rules.repository import RuleRepository
+from app.rules.state import ENTRY, EXIT, HOLD, NEAR_EXIT, evaluate_with_state, instrument_kind
 
 
 @dataclass
@@ -21,6 +21,7 @@ class ScanMatch:
     data_date: date | None
     is_notified: bool
     reasons: list[str]
+    state: str
 
 
 @dataclass
@@ -44,16 +45,22 @@ class ScreeningScanService:
         self._rule_repository = RuleRepository(db)
         self._alert_repository = AlertRepository(db)
         self._market_data_repository = MarketDataRepository(db)
-        self._evaluation_service = RuleEvaluationService(db)
+        self._db = db
 
     def run_scan(self) -> ScanSummary:
         rules = self._rule_repository.list_enabled()
         tickers = self._market_data_repository.list_chartable_tickers()
         summary = ScanSummary(len(rules), len(tickers), 0)
+        kinds: dict[str, str] = {}
         for rule in rules:
             for ticker in tickers:
+                if ticker not in kinds:
+                    kinds[ticker] = instrument_kind(self._db, ticker)
                 try:
-                    result = self._evaluation_service.evaluate(rule, ticker)
+                    result, state = evaluate_with_state(
+                        self._db, rule, ticker,
+                        kind=kinds[ticker],
+                    )
                 except (ValueError, TypeError, ArithmeticError):
                     summary.issues.append(
                         ScanIssue(ticker, rule.name, "評估失敗，請檢查規則參數。")
@@ -65,7 +72,7 @@ class ScreeningScanService:
                             ticker, rule.name, "；".join(c.reason for c in result.condition_results)
                         )
                     )
-                if not result.is_met:
+                if state.state not in (ENTRY, HOLD, NEAR_EXIT, EXIT):
                     continue
                 latest_bar = self._market_data_repository.get_latest_bar(ticker)
                 price = None
@@ -89,15 +96,18 @@ class ScreeningScanService:
                             price_at_trigger=price,
                             message=message,
                             is_notified=False,
+                            state=state.state,
                         )
                     )
                     summary.new_alerts += 1
                 elif not alert.is_notified:
+                    alert.state = state.state
                     self._alert_repository.update_message(alert, message)
                 # Return this scan's matches even when today's alert already exists.
                 summary.matches.append(
                     ScanMatch(
                         id=alert.id,
+                        state=state.state,
                         ticker=ticker,
                         rule_name=rule.name,
                         price_at_trigger=price,
