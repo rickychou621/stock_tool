@@ -520,3 +520,22 @@ def test_stale_info_prioritizes_definition_and_latest_changed_rule(factory):
         )
         assert sum(group["stockCount"] for group in report["overall"]) == len(report["stocks"])
         assert all(group["stale"] for group in report["overall"])
+
+
+def test_overall_compound_return_is_median_of_stocks(factory):
+    manager = make_manager(factory)
+    manager.start([1], now=NOW)
+    manager.close()
+    with factory() as db:
+        rows = list(db.scalars(select(BacktestResult).order_by(BacktestResult.ticker)))
+        assert len(rows) == 2
+        for row, (net, gross) in zip(rows, [(0.1, 0.2), (0.5, 0.6)], strict=True):
+            summary = copy.deepcopy(row.summary)
+            summary["metrics"]["compoundReturn"] = net
+            summary["grossMetrics"]["compoundReturn"] = gross
+            row.summary = summary
+        db.commit()
+        group, = read_report(db)["overall"]
+        assert group["metrics"]["compoundReturn"] == pytest.approx(0.3)
+        assert group["grossMetrics"]["compoundReturn"] == pytest.approx(0.4)
+        assert "compounds" not in group and "grossCompounds" not in group

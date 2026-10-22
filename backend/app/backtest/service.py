@@ -2,6 +2,7 @@ import copy
 import hashlib
 import json
 import logging
+import statistics
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -363,6 +364,10 @@ def average_excess(trades):
     return sum(values) / len(values) if values else None
 
 
+def median_or_none(values):
+    return statistics.median(values) if values else None
+
+
 def read_report(db):
     task = db.get(BacktestTask, 1)
     if task is None:
@@ -445,6 +450,8 @@ def read_report(db):
                     actualStart=p["actualStart"],
                     actualEnd=p["actualEnd"],
                     trades=[],
+                    compounds=[],
+                    grossCompounds=[],
                 ),
             )
             group["stale"] |= stale or definition_changed
@@ -452,15 +459,31 @@ def read_report(db):
             group["actualStart"] = min(group["actualStart"], p["actualStart"])
             group["actualEnd"] = max(group["actualEnd"], p["actualEnd"])
             group["trades"].extend(p["trades"])
+            if p["metrics"].get("compoundReturn") is not None:
+                group["compounds"].append(p["metrics"]["compoundReturn"])
+            gross_compound = p.get("grossMetrics", p["metrics"]).get("compoundReturn")
+            if gross_compound is not None:
+                group["grossCompounds"].append(gross_compound)
     overall = []
     for group in grouped.values():
         overall.append(
             {
-                **{k: v for k, v in group.items() if k != "trades"},
-                "metrics": metrics(group["trades"]),
-                "grossMetrics": metrics(
-                    [{**t, "returnRate": t["grossReturnRate"]} for t in group["trades"]]
-                ),
+                **{
+                    k: v for k, v in group.items()
+                    if k not in ("trades", "compounds", "grossCompounds")
+                },
+                # Chaining every stock's trades into one compound is meaningless across
+                # stocks; report the median of per-stock compound returns instead.
+                "metrics": {
+                    **metrics(group["trades"]),
+                    "compoundReturn": median_or_none(group["compounds"]),
+                },
+                "grossMetrics": {
+                    **metrics(
+                        [{**t, "returnRate": t["grossReturnRate"]} for t in group["trades"]]
+                    ),
+                    "compoundReturn": median_or_none(group["grossCompounds"]),
+                },
                 "averageExcessReturn": average_excess(group["trades"]),
                 "benchmarkBuyHoldReturn": benchmark_return(
                     (task.context_json or {}).get("benchmark", {}),

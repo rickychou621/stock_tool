@@ -903,6 +903,12 @@ details li + li {
 .backtest-page li { overflow-wrap: anywhere; }
 
 .backtest-page .data-table td:nth-child(2) { white-space: nowrap; }
+.backtest-row-thin { opacity: .55; }
+.data-table .backtest-stock-toggle { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; }
+.data-table .backtest-stock-toggle:hover { box-shadow: none; }
+.data-table .backtest-detail-row > td { white-space: normal; font-weight: 400; }
+.backtest-detail { padding: 1rem; border-left: 2px solid var(--border); }
+.backtest-detail-summary { font-size: 12px; }
 
 /* Stage 3: mobile controls, server-side candidate table. */
 .market-controls { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1rem; }

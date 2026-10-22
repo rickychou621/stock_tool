@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '../../api/client'
 import { PageHeader } from '../../components/PageHeader'
+import { summarizeRule } from './summary'
 import type { WatchRule } from '../rules/types'
 import type { CostSnapshot, Detail, Metrics, Report, StockPerformance } from './types'
 
@@ -24,24 +25,25 @@ const taipeiTime = (value: string) => new Intl.DateTimeFormat('zh-TW', {
   hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 }).format(new Date(value))
 const statusLabels = { closed: '已完成', open: '持有中', unfilled: '未成交' }
-const metricHeaders = ['交易次數', '淨勝率', '平均淨報酬', '淨複利報酬', '淨最大回撤', '淨獲利因子']
+const metricHeaders = ['交易次數', '淨勝率', '平均淨報酬', '淨複利報酬', '淨最大回撤', '淨獲利因子', '同期 0050 買進持有']
 function CostInfo({ costs }: { costs: CostSnapshot | null }) {
   if (!costs) return <p className="backtest-warning">舊結果未記錄成本，需重新回測。</p>
   return <p className="muted">本次成本：買賣手續費各 {(costs.feeRate * 100).toFixed(4)}% × {costs.feeDiscount}；
     賣出證交稅：普通股 {percent(costs.taxRateStock)}、ETF {percent(costs.taxRateEtf)}。</p>
 }
-function MetricCells({ metrics: m, gross }: { metrics: Metrics; gross: Metrics }) {
+function MetricCells({ metrics: m, benchmarkBuyHoldReturn }: { metrics: Metrics; benchmarkBuyHoldReturn: number | null }) {
   return (
     <>
       <td>
         {m.tradeCount}
         {m.insufficientSample && <small className="backtest-warning">樣本不足</small>}
       </td>
-      <td>{percent(m.winRate)}<small>毛 {percent(gross.winRate)}</small></td>
-      <td>{percent(m.averageReturn)}<small>毛 {percent(gross.averageReturn)}</small></td>
-      <td>{percent(m.compoundReturn)}<small>毛 {percent(gross.compoundReturn)}</small></td>
-      <td>{percent(m.maxDrawdown)}<small>毛 {percent(gross.maxDrawdown)}</small></td>
-      <td>{!m.tradeCount ? '無資料' : m.noLosses ? '無虧損' : m.profitFactor?.toFixed(2)}<small>毛 {gross.noLosses ? '無虧損' : gross.profitFactor?.toFixed(2) ?? '無資料'}</small></td>
+      <td>{percent(m.winRate)}</td>
+      <td>{percent(m.averageReturn)}</td>
+      <td>{percent(m.compoundReturn)}</td>
+      <td>{percent(m.maxDrawdown)}</td>
+      <td>{!m.tradeCount ? '無資料' : m.noLosses ? '無虧損' : m.profitFactor?.toFixed(2) ?? '無資料'}</td>
+      <td>{percent(benchmarkBuyHoldReturn)}</td>
     </>
   )
 }
@@ -59,12 +61,18 @@ function TradeDetails({ stock, batch }: { stock: StockPerformance; batch: string
   const rerunReason = stock.rerunReason ?? data?.rerunReason
     ?? '需重新回測：以下舊報酬只代表毛報酬。'
   return (
-    <div className="card">
+    <div className="backtest-detail">
       <h2>
         {stock.ticker} {stock.stockName} · {stock.ruleName}
         {(stock.stale || data?.stale) && <span className="stale-mark" title="以下為上次成功結果，已過期。">⚠</span>}
         {needsRerun && <span className="stale-mark" title={rerunReason}>⚠</span>}
       </h2>
+      <div className="muted backtest-detail-summary">
+        <p>毛報酬：勝率 {percent(stock.grossMetrics.winRate)}、平均 {percent(stock.grossMetrics.averageReturn)}、複利 {percent(stock.grossMetrics.compoundReturn)}、最大回撤 {percent(stock.grossMetrics.maxDrawdown)}、獲利因子 {stock.grossMetrics.noLosses ? '無虧損' : stock.grossMetrics.profitFactor?.toFixed(2) ?? '無資料'}</p>
+        <p>平均超額報酬 {percent(stock.averageExcessReturn)}{stock.benchmarkReason && `；${stock.benchmarkReason}`}</p>
+        <p>持有中 {stock.openCount} 筆、未成交 {stock.unfilledCount} 筆</p>
+        <p>略過 {stock.skippedSessions} 個無有效行情日</p>
+      </div>
       {detail.isLoading && <p>讀取明細…</p>}
       {detail.isError && (
         <p role="alert" className="error-text">
@@ -202,10 +210,10 @@ export function BacktestPage() {
     )
     .sort(
       (a, b) =>
+        Number(a.metrics.insufficientSample) - Number(b.metrics.insufficientSample) ||
         (b.metrics[sort] ?? -Infinity) - (a.metrics[sort] ?? -Infinity) ||
         a.ticker.localeCompare(b.ticker),
     )
-  const detailStock = visible.find((s) => s.id === selected)
   return (
     <section className="backtest-page">
       <PageHeader title="戰法回測" description="以最近三年的歷史訊號與模擬交易，檢視戰法表現。" />
@@ -301,6 +309,10 @@ export function BacktestPage() {
         <>
           <div className="card">
             <h2>戰法整體績效</h2>
+            {[...new Map(stocks.map((s) => [s.ruleId, s.ruleName])).entries()].map(([ruleId, ruleName]) => {
+              const summary = summarizeRule(stocks, ruleId)
+              return <p key={ruleId}>{ruleName}：{summary.stockCount} 檔中 {summary.beatBenchmarkCount} 檔贏過同期 0050，中位數淨勝率 {summary.medianWinRate === null ? '無資料' : `${Math.round(summary.medianWinRate * 100)}%`}</p>
+            })}
             <p className="muted">
               統計下方個股結果，舊格式未含淨報酬者除外；期間顯示最早至最晚日期，各股涵蓋長度可能不同。
             </p>
@@ -309,28 +321,21 @@ export function BacktestPage() {
                 <thead>
                   <tr>
                     <th>戰法／股票數</th>
-                    <th>實際期間</th>
                     {metricHeaders.map((h) => (
-                      <th key={h}>{h}</th>
+                      <th key={h}>{h === '淨複利報酬' ? '個股淨複利中位數' : h}</th>
                     ))}
-                    <th>平均超額／0050 基準</th>
                   </tr>
                 </thead>
                 <tbody>
                   {report.data?.overall.map((r) => (
-                    <tr key={r.ruleId}>
+                    <tr key={r.ruleId} className={r.metrics.insufficientSample ? 'backtest-row-thin' : undefined}>
                       <td>
                         {r.ruleName}
                         {r.stale && <span className="stale-mark" title="結果已過期，請重新回測。">⚠</span>}
                         <small>{r.stockCount} 檔</small>
+                        <small>{r.actualStart}～{r.actualEnd}</small>
                       </td>
-                      <td>
-                        {r.actualStart}
-                        <br />
-                        {r.actualEnd}
-                      </td>
-                      <MetricCells metrics={r.metrics} gross={r.grossMetrics} />
-                      <td>{percent(r.averageExcessReturn)}<small>0050 買進持有 {percent(r.benchmarkBuyHoldReturn)}</small></td>
+                      <MetricCells metrics={r.metrics} benchmarkBuyHoldReturn={r.benchmarkBuyHoldReturn} />
                     </tr>
                   ))}
                 </tbody>
@@ -399,55 +404,47 @@ export function BacktestPage() {
                 <thead>
                   <tr>
                     <th>股票／戰法</th>
-                    <th>實際期間</th>
                     {metricHeaders.map((h) => (
                       <th key={h}>{h}</th>
                     ))}
-                    <th>平均超額／0050 基準</th>
-                    <th>持有／未成交</th>
-                    <th>明細</th>
                   </tr>
                 </thead>
                 <tbody>
                   {visible.map((s) => (
-                    <tr key={s.id}>
-                      <td>
-                        {s.ticker} {s.stockName}
-                        <small>{s.ruleName}</small>
-                        {s.needsRerun && <span className="stale-mark" title={s.rerunReason ?? '需重新回測：以下舊報酬只代表毛報酬。'}>⚠</span>}
-                        {s.stale && (
-                          <span className="stale-mark" title="過期：上次成功結果">⚠</span>
-                        )}
-                      </td>
-                      <td>
-                        {s.actualStart}
-                        <br />
-                        {s.actualEnd}
-                        <small>略過 {s.skippedSessions} 個無有效行情日</small>
-                      </td>
-                      <MetricCells metrics={s.metrics} gross={s.grossMetrics} />
-                      <td>{percent(s.averageExcessReturn)}<small>0050 買進持有 {percent(s.benchmarkBuyHoldReturn)}</small>
-                        {s.benchmarkReason && <small>{s.benchmarkReason}</small>}</td>
-                      <td>
-                        {s.openCount}／{s.unfilledCount}
-                      </td>
-                      <td>
-                        <button onClick={() => setSelected(s.id)}>查看明細</button>
-                      </td>
-                    </tr>
+                    <Fragment key={s.id}>
+                      <tr className={s.metrics.insufficientSample ? 'backtest-row-thin' : undefined}>
+                        <td>
+                          <button
+                            className="row-link backtest-stock-toggle"
+                            aria-expanded={selected === s.id}
+                            aria-controls={selected === s.id ? `backtest-detail-${s.id}` : undefined}
+                            onClick={() => setSelected(selected === s.id ? null : s.id)}
+                          >
+                            {selected === s.id ? '▾' : '▸'} {s.ticker} {s.stockName}
+                          </button>
+                          <small>{s.ruleName}</small>
+                          {s.needsRerun && <span className="stale-mark" title={s.rerunReason ?? '需重新回測：以下舊報酬只代表毛報酬。'}>⚠</span>}
+                          {s.stale && (
+                            <span className="stale-mark" title="過期：上次成功結果">⚠</span>
+                          )}
+                          <small>{s.actualStart}～{s.actualEnd}</small>
+                        </td>
+                        <MetricCells metrics={s.metrics} benchmarkBuyHoldReturn={s.benchmarkBuyHoldReturn} />
+                      </tr>
+                      {selected === s.id && (
+                        <tr className="backtest-detail-row" id={`backtest-detail-${s.id}`}>
+                          <td colSpan={metricHeaders.length + 1}>
+                            <TradeDetails key={`${s.id}-${s.calculatedAt}`} stock={s} batch={task.batchId} />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
             </div>
             {!visible.length && <p>沒有符合篩選條件的結果。</p>}
           </div>
-          {detailStock && (
-            <TradeDetails
-              key={`${detailStock.id}-${detailStock.calculatedAt}`}
-              stock={detailStock}
-              batch={task.batchId}
-            />
-          )}
         </>
       )}
     </section>
