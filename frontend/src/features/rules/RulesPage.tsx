@@ -52,6 +52,10 @@ export function RulesPage() {
         eyebrow="工作空間設定"
       />
 
+      <p className="muted">
+        戰法一（5 分 K 10/60 EMA）尚未支援：需要盤中 5 分 K 資料與大戶買賣力資料。
+      </p>
+
       <div className="card">
         {(rulesQuery.isLoading || conditionsQuery.isLoading) && <p className="muted">讀取中...</p>}
         {(rulesQuery.isError || conditionsQuery.isError) && (

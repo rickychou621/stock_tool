@@ -213,3 +213,38 @@ def test_missing_close_does_not_calculate_distance():
 def test_settings_reject_invalid_threshold(value):
     with pytest.raises(ValidationError):
         Settings(_env_file=None, near_exit_pct=value)
+
+
+@pytest.mark.parametrize("indicators", [
+    ({"close_distance_pct": 0.0324}, {"slope_pct": 0.00356}, 3.2, 0.36),
+    ({"close_distance_pct": -0.0124}, {"slope_pct": -0.00356}, -1.2, -0.36),
+    ({"close_distance_pct": 0}, {"slope_pct": 0}, 0, 0),
+    ({}, {}, None, None),
+])
+def test_strategy_two_ma_indicators(indicators):
+    distance, slope, expected_distance, expected_slope = indicators
+    strategy = stop_rule()
+    result = RuleEvaluationService.evaluate_bars(strategy, "TEST", bars(22))
+    result.condition_results[0].condition_id = "ma_rising"
+    result.condition_results[0].indicators = slope
+    result.condition_results[1].condition_id = "ma_touch_rebound"
+    result.condition_results[1].indicators = distance
+
+    state = classify(strategy, "TEST", bars(22), result)
+    assert state.ma_distance_pct == expected_distance
+    assert state.ma_slope_pct == expected_slope
+
+
+def test_strategy_three_has_no_ma_indicators():
+    strategy = rule(
+        condition(), condition("entry", False), condition("exit", False), condition("exit", False),
+        frequency="weekly",
+    )
+    for item, condition_id in zip(strategy.conditions, (
+        "macd_positive", "kd_golden_cross", "kd_high_death_cross", "macd_negative_any",
+    ), strict=True):
+        item.condition_id = condition_id
+
+    state = classify(strategy, "TEST", bars())
+    assert state.ma_distance_pct is None
+    assert state.ma_slope_pct is None

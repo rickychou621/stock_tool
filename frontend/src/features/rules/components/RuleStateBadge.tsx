@@ -11,6 +11,10 @@ export function RuleStateBadge({ ruleName, state }: { ruleName: string; state: R
 export function RuleStateLine({ state }: { state: RuleStateDetail }) {
   const distance =
     state.distancePct === null ? '—' : Number(state.distancePct.toFixed(1)).toFixed(1)
+  const signedPct = (value: number, digits: number) => {
+    const rounded = Number(value.toFixed(digits))
+    return `${rounded > 0 ? '+' : ''}${rounded.toFixed(digits)}`
+  }
   return (
     <p className="rule-state-line">
       {STATE_LABELS[state.state]}：{state.reason}
@@ -19,6 +23,8 @@ export function RuleStateLine({ state }: { state: RuleStateDetail }) {
           （觸價 {state.triggerPrice}，現價 {state.close ?? '—'}，距離 {distance}%）
         </>
       )}
+      {state.maDistancePct != null && `｜距月線 ${signedPct(state.maDistancePct, 1)}%`}
+      {state.maSlopePct != null && `｜月線斜率 ${signedPct(state.maSlopePct, 2)}%／5 日`}
     </p>
   )
 }

@@ -3,6 +3,7 @@ import type { RuleStateDetail } from './state'
 export type LogicOperator = 'AND' | 'OR'
 
 export interface RuleCondition {
+  role: 'premise' | 'entry' | 'exit'
   conditionId: string
   params: Record<string, unknown>
 }

@@ -400,6 +400,13 @@ button:disabled {
   background: var(--warning-soft);
   color: var(--warning);
 }
+.status-warning {
+  margin-left: 6px;
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+.rule-condition { margin: 4px 0; }
+.rule-condition small { display: block; margin-top: 2px; }
 .status-error {
   background: var(--danger-soft);
   color: var(--danger);

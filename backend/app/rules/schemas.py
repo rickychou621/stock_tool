@@ -51,6 +51,8 @@ class RuleStateSchema(CamelModel):
     trigger_price: float | None
     close: float | None
     distance_pct: float | None
+    ma_distance_pct: float | None = None
+    ma_slope_pct: float | None = None
 
 
 class RuleEvaluationSchema(CamelModel):

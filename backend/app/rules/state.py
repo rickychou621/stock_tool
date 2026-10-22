@@ -32,6 +32,8 @@ class RuleState:
     trigger_price: float | None
     close: float | None
     distance_pct: float | None
+    ma_distance_pct: float | None = None
+    ma_slope_pct: float | None = None
 
 
 def _triggered(result):
@@ -58,9 +60,19 @@ def classify(rule, ticker, bars, result=None, *, kind="stock", near_exit_pct=Non
     close = stop["close"] if stop else None
     distance = (close - price) / price if price is not None and close is not None else None
 
+    def indicator_pct(condition_id, key, digits):
+        value = next(
+            (c.indicators.get(key) for c in result.condition_results
+             if c.condition_id == condition_id and c.indicators),
+            None,
+        )
+        return round(value * 100, digits) if value is not None else None
+
     def outcome(state, reason):
         return RuleState(
             state, reason, price, close, round(distance * 100, 1) if distance is not None else None,
+            ma_distance_pct=indicator_pct("ma_touch_rebound", "close_distance_pct", 1),
+            ma_slope_pct=indicator_pct("ma_rising", "slope_pct", 2),
         )
 
     def reasons(role):

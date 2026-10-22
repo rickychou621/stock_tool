@@ -6,6 +6,8 @@ export interface RuleStateDetail {
   triggerPrice: number | null
   close: number | null
   distancePct: number | null
+  maDistancePct?: number | null
+  maSlopePct?: number | null
 }
 
 export const STATE_LABELS: Record<RuleStateCode, string> = {
