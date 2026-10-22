@@ -26,6 +26,7 @@ class MarketInstrument(Base):
     ticker: Mapped[str] = mapped_column(String(10), ForeignKey("stocks.ticker"), primary_key=True)
     market: Mapped[str] = mapped_column(String(20), default="TWSE")
     kind: Mapped[str] = mapped_column(String(20))
+    etf_category: Mapped[str | None] = mapped_column(String(16), nullable=True)
     listed_on: Mapped[date] = mapped_column(Date)
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
 

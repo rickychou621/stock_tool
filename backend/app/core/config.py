@@ -41,6 +41,15 @@ class Settings(BaseSettings):
 
     near_exit_pct: float = Field(default=0.03, gt=0, lt=1, allow_inf_nan=False)
 
+    screening_excluded_etf_categories: str = "leveraged,inverse,bond"
+
+    @property
+    def excluded_etf_categories(self) -> set[str]:
+        return {
+            part.strip() for part in self.screening_excluded_etf_categories.split(",")
+            if part.strip()
+        }
+
     signal_tracking_horizons: str = "1,5,10,20"
 
     @field_validator("signal_tracking_horizons")

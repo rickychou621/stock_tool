@@ -279,6 +279,8 @@ def test_universe_upsert_deactivation_completeness_and_fallback(factory):
     with factory() as db:
         items, warning = refresh_universe(db, DAY, lambda d: source)
         assert len(items) == 900 and not warning
+        assert db.get(MarketInstrument, "1000").etf_category is None
+        assert db.get(MarketInstrument, "1800").etf_category == "equity"
         assert not db.get(MarketInstrument, "1").active
         assert db.scalar(select(Stock).where(Stock.ticker == "1000")).name == "N0"
         assert len(refresh_universe(db, DAY, lambda d: source[:10])[0]) == 900

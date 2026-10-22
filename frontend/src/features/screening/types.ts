@@ -11,6 +11,7 @@ export interface TodayMatchItem {
   state: RuleStateCode | null
   id: number
   ticker: string
+  name: string
   ruleName: string
   triggeredAt: string
   priceAtTrigger: number | null
@@ -18,6 +19,7 @@ export interface TodayMatchItem {
 
 export interface ScanSummary {
   rulesEvaluated: number
+  excluded: number
   stocksScanned: number
   newAlerts: number
   matches: ScanMatch[]
@@ -33,12 +35,14 @@ export interface CandidateRefreshSummary {
 
 export interface ScanMatch {
   state: RuleStateCode
-  id: number
+  id: number | null
   ticker: string
+  name: string
   ruleName: string
   priceAtTrigger: number | null
   dataDate: string | null
   isNotified: boolean
+  reason: string
   reasons: string[]
 }
 export interface NotificationSummary {

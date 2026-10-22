@@ -73,6 +73,14 @@ def fetch_universe(today):
     return parse_universe(response.content.decode("cp950"), today)
 
 
+def etf_category(ticker: str, kind: str) -> str | None:
+    if kind != "etf":
+        return None
+    return {"L": "leveraged", "R": "inverse", "B": "bond", "D": "bond", "U": "futures"}.get(
+        ticker[-1:], "equity"
+    )
+
+
 def refresh_universe(db, today, fetch=fetch_universe):
     try:
         rows = fetch(today)
@@ -114,6 +122,7 @@ def refresh_universe(db, today, fetch=fetch_universe):
                 row["listed_on"],
                 True,
             )
+            item.etf_category = etf_category(ticker, row["kind"])
         for item in instruments.values():
             if item.market == "TWSE" and item.ticker not in current:
                 item.active = False

@@ -856,7 +856,6 @@ def test_list_saved_state_marks_stale_and_legacy(factory, case):
 
 @pytest.mark.parametrize("exited", [False, True])
 def test_scan_state_filters_and_persists_alerts(factory, exited):
-    from app.alerts.models import AlertLog
     from app.alerts.router import list_alerts
     from app.screening.scan_service import ScreeningScanService
 
@@ -872,23 +871,83 @@ def test_scan_state_filters_and_persists_alerts(factory, exited):
             bar.close = bar.adj_close = 95
             db.commit()
         summary = ScreeningScanService(db).run_scan()
-        assert summary.new_alerts == int(exited)
+        assert summary.new_alerts == 0
         assert len(summary.matches) == int(exited)
-        alerts = list_alerts(limit=50, ticker=None, today_only=True, db=db)
-        assert len(alerts) == int(exited)
+        assert list_alerts(limit=50, ticker=None, today_only=True, db=db) == []
         if exited:
-            assert summary.matches[0].state == alerts[0].state == "EXIT"
-            alert = db.get(AlertLog, alerts[0].id)
-            alert.state = "HOLD"
-            alert.message = "old"
+            assert summary.matches[0].state == "EXIT"
+            assert summary.matches[0].id is None
+
+
+@pytest.mark.parametrize("exclusions", ["leveraged,inverse,bond", ""])
+def test_manual_scan_excludes_etfs_and_counts_stocks(factory, monkeypatch, exclusions):
+    from app.core.config import get_settings
+    from app.market_scan.models import MarketInstrument
+    from app.screening.scan_service import ScreeningScanService
+
+    monkeypatch.setattr(get_settings(), "screening_excluded_etf_categories", exclusions)
+    instruments = [
+        ("00631L", "leveraged"), ("00632R", "inverse"), ("00679B", "bond"),
+        ("00980D", "bond"), ("00635U", "futures"), ("0050", "equity"),
+        ("5483", None),
+    ]
+    with factory() as db:
+        for ticker, _category in instruments:
+            db.add(Stock(ticker=ticker, name=f"名稱{ticker}", market="上市"))
+        db.flush()
+        for ticker, category in instruments:
+            if category:
+                db.add(MarketInstrument(
+                    ticker=ticker, kind="etf", etf_category=category, listed_on=DAY,
+                ))
+            for i in range(25):
+                db.add(StockPriceDaily(
+                    ticker=ticker, trade_date=DAY - timedelta(days=24-i),
+                    open=100, high=110, low=90, close=105,
+                    volume=10000 if i == 24 else 1000,
+                ))
+        db.commit()
+        summary = ScreeningScanService(db).run_scan()
+        expected = {"00635U", "0050", "5483"} if exclusions else {t for t, _ in instruments}
+        assert {m.ticker for m in summary.matches} == expected
+        assert summary.excluded == (4 if exclusions else 0)
+        assert summary.stocks_scanned == len(expected)
+        assert summary.new_alerts == len(expected)
+        assert all(m.name == f"名稱{m.ticker}" and m.reason for m in summary.matches)
+
+
+@pytest.mark.parametrize("state_name", ["ENTRY", "EXIT", "HOLD", "NEAR_EXIT"])
+def test_manual_scan_only_records_entry(factory, monkeypatch, state_name):
+    from app.alerts.models import AlertLog
+    from app.alerts.router import list_alerts
+    from app.screening import scan_service
+
+    seed_bars(factory)
+    monkeypatch.setattr(scan_service, "evaluate_with_state", lambda *a, **kw: (
+        SimpleNamespace(status="matched", data_date=DAY,
+                        condition_results=[SimpleNamespace(reason="條件符合")]),
+        SimpleNamespace(state=state_name, reason="狀態原因"),
+    ))
+    with factory() as db:
+        for _ in range(2):
+            summary = scan_service.ScreeningScanService(db).run_scan()
+            match, = summary.matches
+            assert match.name == "台積電"
+            assert match.reason == "狀態原因"
+            assert match.reasons == ["條件符合"]
+            assert match.is_notified is False
+            persisted = state_name == "ENTRY"
+            assert (match.id is not None) == persisted
+            alerts = list_alerts(limit=50, ticker=None, today_only=True, db=db)
+            assert len(alerts) == int(persisted)
+            if persisted:
+                assert alerts[0].name == "台積電"
+                assert alerts[0].state == state_name
+        if not persisted:
+            db.add(AlertLog(rule_id=1, ticker="2330", state="ENTRY",
+                            message="原有告警", is_notified=True))
             db.commit()
-            assert ScreeningScanService(db).run_scan().new_alerts == 0
-            db.refresh(alert)
-            assert alert.state == "EXIT" and alert.message != "old"
-            alert.is_notified = True
-            alert.state = "HOLD"
-            alert.message = "sent"
-            db.commit()
-            ScreeningScanService(db).run_scan()
-            db.refresh(alert)
-            assert alert.state == "HOLD" and alert.message == "sent"
+            match, = scan_service.ScreeningScanService(db).run_scan().matches
+            assert match.id is None and match.is_notified is False
+            alert = db.scalar(select(AlertLog))
+            assert alert.state == "ENTRY" and alert.message == "原有告警"

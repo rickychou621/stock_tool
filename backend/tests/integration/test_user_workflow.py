@@ -74,6 +74,10 @@ def test_scan_only_returns_matches_and_never_sends_telegram(context):
     assert result.status_code == 200
     payload = result.json()
     assert payload["stocksScanned"] == 3
+    assert payload["excluded"] == 0
+    assert payload["matches"][0]["name"] == "2330"
+    assert payload["matches"][0]["reason"]
+    assert client.get("/alerts").json()[0]["name"] == "2330"
     assert [m["ticker"] for m in payload["matches"]] == ["2330"]
     assert [issue["ticker"] for issue in payload["issues"]] == ["2454"]
     assert payload["matches"][0]["isNotified"] is False

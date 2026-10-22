@@ -347,3 +347,9 @@ weekly 使用台北交易日期，只在週五判斷，採用當月截至該日�
 月線上揚且回到月線後隔天轉強時產生進場訊號；連續 2 天收盤各自低於當日月線 × 0.98 時產生出場訊號。回測於訊號後下一個有效交易日開盤成交。觀察清單觸價保護價以月線 × 0.98 為基準，再依商品 tick 級距往下 3 tick。
 
 SQL 以單一交易刪除並重建 rule_id=1 的條件，可重複執行；watch_rules 沒有 id=1 時不新增，不影響 rule_id=2／3。舊戰法二訊號歷史由審查方另外清除，此 migration 不刪除歷史。
+
+## ETF 分類 Migration 022
+
+`mysql/init/022_etf_category.sql` 可重複執行，新增 `market_scan_instruments.etf_category VARCHAR(16) NULL`，並依 ETF 代號尾碼回填：L 為 leveraged、R 為 inverse、B／D 為 bond、U 為 futures，其餘為 equity。非 ETF 保留 NULL；上市名單更新時同步維護分類。
+
+既有 DB 須先套用 migration 再啟動新版後端。手動掃描預設排除 leveraged、inverse、bond；`SCREENING_EXCLUDED_ETF_CATEGORIES` 可調整排除分類，空字串表示不排除。未在上市名單的股票不排除。

@@ -12,8 +12,10 @@ class CandidateStockSchema(CamelModel):
 
 
 class ScanMatchSchema(CamelModel):
-    id: int
+    id: int | None
     ticker: str
+    name: str
+    reason: str
     rule_name: str
     price_at_trigger: float | None
     data_date: date | None
@@ -32,6 +34,7 @@ class ScanSummarySchema(CamelModel):
     rules_evaluated: int
     stocks_scanned: int
     new_alerts: int
+    excluded: int
     matches: list[ScanMatchSchema]
     issues: list[ScanIssueSchema]
 

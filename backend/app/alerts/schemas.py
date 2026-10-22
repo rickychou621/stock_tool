@@ -10,6 +10,7 @@ from app.core.schemas import CamelModel
 class AlertMatchSchema(CamelModel):
     id: int
     ticker: str
+    name: str
     rule_name: str
     triggered_at: datetime
     price_at_trigger: float | None

@@ -89,6 +89,13 @@ class MarketDataRepository:
         )
         return self._db.scalars(stmt).first()
 
+    def get_names(self, tickers: list[str]) -> dict[str, str]:
+        if not tickers:
+            return {}
+        return dict(self._db.execute(
+            select(Stock.ticker, Stock.name).where(Stock.ticker.in_(tickers))
+        ).all())
+
     def list_chartable_tickers(self) -> list[str]:
         """有日K資料、可以被規則評估的股票代號清單。"""
         stmt = (

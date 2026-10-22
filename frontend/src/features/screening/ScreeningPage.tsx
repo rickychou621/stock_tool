@@ -5,10 +5,14 @@ import { Link } from 'react-router-dom'
 import { apiClient } from '../../api/client'
 import { TodayMatchesTable } from './components/TodayMatchesTable'
 import { AddToWatchlistButton } from '../watchlist/components/AddToWatchlistButton'
-import { getStockName } from '../../lib/stockDirectory'
+import { useState } from 'react'
+import { STATE_LABELS, STATE_URGENCY, type RuleStateCode } from '../rules/state'
 import type { ScanSummary, TodayMatchItem, NotificationSummary } from './types'
 
+const FILTER_STATES: RuleStateCode[] = ['ENTRY', 'EXIT', 'NEAR_EXIT', 'HOLD']
+
 export function ScreeningPage() {
+  const [selectedStates, setSelectedStates] = useState<RuleStateCode[]>(['ENTRY'])
   const queryClient = useQueryClient()
   const todayMatches = useQuery({
     queryKey: ['alerts', { todayOnly: true }],
@@ -46,7 +50,7 @@ export function ScreeningPage() {
             ? {
                 ...old,
                 matches: old.matches.map((m) =>
-                  part.sentIds.includes(m.id) || part.skippedIds.includes(m.id)
+                  m.id !== null && (part.sentIds.includes(m.id) || part.skippedIds.includes(m.id))
                     ? { ...m, isNotified: true }
                     : m,
                 ),
@@ -58,9 +62,31 @@ export function ScreeningPage() {
     },
   })
   const scan = snapshot.data
-  const pendingIds = [...new Set(scan?.matches.filter((m) => !m.isNotified).map((m) => m.id) ?? [])]
-  const pendingStocks = new Set(scan?.matches.filter((m) => !m.isNotified).map((m) => m.ticker))
-    .size
+  const matches = scan?.matches ?? []
+  const pendingMatches = matches.filter(
+    (m) => m.id !== null && !m.isNotified && m.state === 'ENTRY',
+  )
+  const pendingIds = [...new Set(pendingMatches.flatMap((m) => (m.id === null ? [] : [m.id])))]
+  const pendingStocks = new Set(pendingMatches.map((m) => m.ticker)).size
+  const counts = Object.fromEntries(
+    FILTER_STATES.map((state) => [state, matches.filter((m) => m.state === state).length]),
+  )
+  const stockCount = (state: RuleStateCode) =>
+    new Set(matches.filter((m) => m.state === state).map((m) => m.ticker)).size
+  const visibleMatches = matches
+    .filter((m) => selectedStates.includes(m.state))
+    .sort(
+      (a, b) => STATE_URGENCY[a.state] - STATE_URGENCY[b.state] || a.ticker.localeCompare(b.ticker),
+    )
+  function toggleState(state: RuleStateCode) {
+    setSelectedStates((selected) =>
+      selected.includes(state)
+        ? selected.length > 1
+          ? selected.filter((value) => value !== state)
+          : selected
+        : [...selected, state],
+    )
+  }
   return (
     <section>
       <PageHeader
@@ -85,13 +111,20 @@ export function ScreeningPage() {
           className="button-notify"
           type="button"
           disabled={!pendingIds.length || scanMutation.isPending || notifyMutation.isPending}
-          onClick={() => notifyMutation.mutate(pendingIds)}
+          onClick={() => {
+            if (
+              pendingStocks > 50 &&
+              !window.confirm(`這次會通知 ${pendingStocks} 檔股票，確定要發送嗎？`)
+            )
+              return
+            notifyMutation.mutate(pendingIds)
+          }}
         >
           {notifyMutation.isPending ? '發送中…' : `通知 Telegram（${pendingStocks} 檔）`}
         </button>
         <p className="muted">
-          只通知本次符合戰法的個股，每則訊息最多彙整 50
-          筆，文字較長時會分段。同股不同戰法各算一筆，今天已通知的戰法不重送。
+          只通知進場訊號；持股的出場由觀察清單每天 18:00 通知。每則訊息最多彙整 50
+          筆，今天已通知的戰法不重送。
         </p>
         {scanMutation.isError && (
           <p role="alert" className="error-text">
@@ -123,26 +156,38 @@ export function ScreeningPage() {
               </strong>
             </div>
             <div className="overview-tile">
-              <span>使用戰法</span>
+              <span>進場訊號</span>
               <strong>
-                {scan.rulesEvaluated}
-                <small> 條</small>
+                {stockCount('ENTRY')}
+                <small> 檔</small>
               </strong>
             </div>
             <div className="overview-tile">
-              <span>符合戰法</span>
+              <span>出場訊號</span>
               <strong>
-                {new Set(scan.matches.map((m) => m.ticker)).size}
+                {stockCount('EXIT')}
                 <small> 檔</small>
               </strong>
             </div>
           </div>
           <p>
-            檢查 {scan.stocksScanned} 檔 × {scan.rulesEvaluated} 條戰法，
-            {new Set(scan.matches.map((m) => m.ticker)).size} 檔符合，新增 {scan.newAlerts} 則紀錄。
+            檢查 {scan.stocksScanned} 檔 × {scan.rulesEvaluated} 條戰法，已排除{' '}
+            {scan.excluded} 檔反向／槓桿／債券 ETF。
           </p>
-          {scan.matches.length === 0 ? (
-            <p>本次沒有符合戰法的股票。</p>
+          <div className="state-counts" aria-label="掃描結果狀態篩選">
+            {FILTER_STATES.map((state) => (
+              <button
+                key={state}
+                type="button"
+                aria-pressed={selectedStates.includes(state)}
+                onClick={() => toggleState(state)}
+              >
+                {STATE_LABELS[state]} {counts[state]}
+              </button>
+            ))}
+          </div>
+          {visibleMatches.length === 0 ? (
+            <p>{matches.length === 0 ? '本次沒有符合戰法的股票。' : '所選狀態沒有符合的股票。'}</p>
           ) : (
             <div
               className="table-scroll"
@@ -161,11 +206,11 @@ export function ScreeningPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {scan.matches.map((item) => (
-                    <tr key={item.id}>
+                  {visibleMatches.map((item, index) => (
+                    <tr key={item.id ?? `${item.ticker}-${item.ruleName}-${item.state}-${index}`}>
                       <td>
                         <Link to={`/chart?ticker=${item.ticker}`} state={{ from: '/matches' }}>
-                          {item.ticker} {getStockName(item.ticker)}
+                          {item.ticker} {item.name}
                         </Link>
                       </td>
                       <td>
@@ -174,6 +219,9 @@ export function ScreeningPage() {
                         ) : (
                           item.ruleName
                         )}
+                        <p className="muted">
+                          <small>{item.reason}</small>
+                        </p>
                         <details>
                           <summary>符合原因</summary>
                           <ul>
@@ -189,8 +237,10 @@ export function ScreeningPage() {
                         {item.priceAtTrigger ?? '—'}
                       </td>
                       <td>
-                        <span className={`status-badge ${item.isNotified ? 'status-matched' : ''}`}>
-                          {item.isNotified ? '已通知' : '尚未通知'}
+                        <span
+                          className={`status-badge ${item.id !== null && item.isNotified ? 'status-matched' : ''}`}
+                        >
+                          {item.id === null ? '不通知' : item.isNotified ? '已通知' : '尚未通知'}
                         </span>
                       </td>
                       <td>
