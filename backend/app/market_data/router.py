@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import exists, select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db
@@ -14,6 +14,7 @@ router = APIRouter(prefix="/stocks", tags=["stocks"])
 def list_stocks(
     limit: int = Query(10, ge=1, le=50),
     chartable_only: bool = True,
+    q: str | None = Query(None, max_length=20),
     db: Session = Depends(get_db),
 ) -> list[StockSchema]:
     """預設只回傳已經有日K資料、可以在個股查詢頁畫出線圖的股票；
@@ -21,6 +22,13 @@ def list_stocks(
     stmt = select(Stock).where(Stock.is_active.is_(True))
     if chartable_only:
         stmt = stmt.where(exists().where(StockPriceDaily.ticker == Stock.ticker))
+    q = q.strip() if q else None
+    if q:
+        stmt = stmt.where(
+            or_(
+                Stock.ticker.startswith(q, autoescape=True), Stock.name.contains(q, autoescape=True)
+            )
+        ).order_by((Stock.ticker == q).desc())
     stmt = stmt.order_by(Stock.ticker).limit(limit)
     stocks = db.scalars(stmt).all()
     return [StockSchema(ticker=s.ticker, name=s.name, sector=s.sector) for s in stocks]

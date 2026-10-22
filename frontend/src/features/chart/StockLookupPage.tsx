@@ -25,6 +25,9 @@ export function StockLookupPage() {
   const tickerFromUrl = searchParams.get('ticker')
 
   const [selectedTicker, setSelectedTicker] = useState(tickerFromUrl ?? '')
+  const [selectedName, setSelectedName] = useState('')
+  const [searchInput, setSearchInput] = useState<string | null>(null)
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [emaVisibility, setEmaVisibility] = useState<EmaVisibility>({
     ema10: true,
     ema20: true,
@@ -34,9 +37,23 @@ export function StockLookupPage() {
   const [subPanelIndicator, setSubPanelIndicator] = useState<SubPanelIndicator>('kd')
 
   const stocksQuery = useQuery({
-    queryKey: ['stocks'],
-    queryFn: () => apiClient.get<StockInfo[]>('/stocks?limit=50'),
+    queryKey: ['stocks', { limit: 20 }],
+    queryFn: () => apiClient.get<StockInfo[]>('/stocks?limit=20'),
   })
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(searchInput?.trim() ?? ''), 300)
+    return () => window.clearTimeout(timer)
+  }, [searchInput])
+
+  const searchQuery = useQuery({
+    queryKey: ['stocks', { limit: 20, q: debouncedSearch }],
+    queryFn: () => apiClient.get<StockInfo[]>(`/stocks?limit=20&q=${encodeURIComponent(debouncedSearch)}`),
+    enabled: searchInput !== null && Boolean(debouncedSearch),
+  })
+  const lookupQuery = searchInput?.trim() ? searchQuery : stocksQuery
+  const searchReady = !searchInput?.trim() || searchInput.trim() === debouncedSearch
+  const options = searchReady ? (lookupQuery.data ?? []) : []
 
   // 股票清單載入後，如果目前還沒選定股票(例如直接進這頁、URL沒帶ticker)，預設選第一檔。
   useEffect(() => {
@@ -48,6 +65,12 @@ export function StockLookupPage() {
   const handleSelectTicker = (ticker: string) => {
     setSelectedTicker(ticker)
     setSearchParams({ ticker })
+  }
+
+  const selectStock = (stock: StockInfo) => {
+    handleSelectTicker(stock.ticker)
+    setSelectedName(stock.name)
+    setSearchInput(null)
   }
 
   const profile = useQuery({
@@ -116,15 +139,32 @@ export function StockLookupPage() {
 
       <label className="field">
         <span>選擇股票</span>
-        {stocksQuery.isLoading && <p className="muted">讀取中...</p>}
-        {stocksQuery.data && (
-          <select value={selectedTicker} onChange={(e) => handleSelectTicker(e.target.value)}>
-            {stocksQuery.data.map((stock) => (
-              <option key={stock.ticker} value={stock.ticker}>
-                {stock.ticker} {stock.name}
-              </option>
-            ))}
-          </select>
+        <input
+          list="stock-search-options"
+          placeholder="輸入代號或股名，例如 1303 或 南亞"
+          value={searchInput ?? `${selectedTicker} ${profile.data?.name ?? selectedName}`.trim()}
+          onChange={(event) => {
+            const value = event.target.value
+            const stock = options.find((option) => value === `${option.ticker} ${option.name}`)
+            if (stock) selectStock(stock)
+            else setSearchInput(value)
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+            const stock = options.find((option) => option.ticker === event.currentTarget.value.trim())
+            if (stock) {
+              event.preventDefault()
+              selectStock(stock)
+            }
+          }}
+        />
+        <datalist id="stock-search-options">
+          {options.map((stock) => (
+            <option key={stock.ticker} value={`${stock.ticker} ${stock.name}`} />
+          ))}
+        </datalist>
+        {searchInput !== null && searchReady && lookupQuery.isSuccess && options.length === 0 && (
+          <small className="muted">找不到符合的股票</small>
         )}
       </label>
 
