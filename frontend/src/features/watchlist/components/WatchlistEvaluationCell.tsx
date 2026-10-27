@@ -1,3 +1,4 @@
+import { formatTaipeiTime } from '../../../lib/time'
 import type { SavedEvaluation } from '../types'
 import { STATE_LABELS } from '../../rules/state'
 import { RuleStateBadge, RuleStateLine } from '../../rules/components/RuleStateBadge'
@@ -81,7 +82,7 @@ export function WatchlistEvaluationCell({
               </strong>
               <p className="muted">
                 行情：{r.result.dataDate ?? '無資料'} · 評估：
-                {new Date(r.evaluatedAt).toLocaleString('zh-TW')}
+                {formatTaipeiTime(r.evaluatedAt)}
               </p>
               <ul>
                 {r.result.conditionResults.map((c, i) => (

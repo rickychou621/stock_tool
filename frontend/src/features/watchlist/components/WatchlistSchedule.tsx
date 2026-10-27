@@ -1,3 +1,4 @@
+import { formatTaipeiTime } from '../../../lib/time'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '../../../api/client'
@@ -28,8 +29,6 @@ const statuses: Record<string, string> = {
   partial_failure: '部分失敗',
   failed: '失敗',
 }
-const displayTime = (value: string) =>
-  new Date(value).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })
 
 export function WatchlistSchedule({ rules }: { rules: WatchRule[] | undefined }) {
   const client = useQueryClient()
@@ -69,7 +68,7 @@ export function WatchlistSchedule({ rules }: { rules: WatchRule[] | undefined })
         </span>
         {run && (
           <span className="muted">
-            最近一次：{statuses[run.status] ?? run.status} · {displayTime(run.startedAt)}
+            最近一次：{statuses[run.status] ?? run.status} · {formatTaipeiTime(run.startedAt)}
           </span>
         )}
       </summary>
@@ -152,7 +151,7 @@ export function WatchlistSchedule({ rules }: { rules: WatchRule[] | undefined })
         {run && (
           <>
             <p>
-              <strong>{statuses[run.status] ?? run.status}</strong> · {displayTime(run.startedAt)}
+              <strong>{statuses[run.status] ?? run.status}</strong> · {formatTaipeiTime(run.startedAt)}
             </p>
             <p>
               共 {run.total} 檔 · 成功 {run.succeeded} 檔 · 失敗 {run.failed} 檔

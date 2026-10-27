@@ -1,3 +1,4 @@
+import { formatTaipeiTime } from '../../../lib/time'
 import type { TriggerHistoryItem } from '../types'
 
 interface TriggerHistoryListProps {
@@ -23,7 +24,7 @@ export function TriggerHistoryList({ items }: TriggerHistoryListProps) {
           {items.map((item) => (
             <tr key={item.id}>
               <td>{item.ruleName}</td>
-              <td>{item.triggeredAt}</td>
+              <td>{formatTaipeiTime(item.triggeredAt)}</td>
               <td>{item.priceAtTrigger}</td>
             </tr>
           ))}

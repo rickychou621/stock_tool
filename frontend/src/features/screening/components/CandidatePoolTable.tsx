@@ -1,3 +1,4 @@
+import { formatTaipeiTime } from '../../../lib/time'
 import { Link } from 'react-router-dom'
 import { AddToWatchlistButton } from '../../watchlist/components/AddToWatchlistButton'
 import { getStockName } from '../../../lib/stockDirectory'
@@ -34,7 +35,7 @@ export function CandidatePoolTable({ items }: CandidatePoolTableProps) {
               </td>
               <td>{getStockName(item.ticker)}</td>
               <td>{item.reason}</td>
-              <td>{item.addedAt}</td>
+              <td>{formatTaipeiTime(item.addedAt)}</td>
               <td>
                 <AddToWatchlistButton ticker={item.ticker} />
               </td>

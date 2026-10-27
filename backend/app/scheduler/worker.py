@@ -29,15 +29,24 @@ def validate_bars(bars, day: date):
             continue
         for prefix in ("", "adj_"):
             prices = [getattr(bar, prefix + key) for key in ("open", "high", "low", "close")]
-            if any(
-                value is None or not math.isfinite(float(value)) or value <= 0 for value in prices
-            ):
-                raise ValueError(f"{bar.trade_date} {prefix}OHLC 必須為有效正數")
+            label = "還原" if prefix else ""
+            invalid = [
+                f"{label}{name}={value}"
+                for name, value in zip(
+                    ("開盤價", "最高價", "最低價", "收盤價"), prices, strict=True
+                )
+                if value is None or not math.isfinite(float(value)) or value <= 0
+            ]
+            if invalid:
+                raise ValueError(f"{bar.trade_date} {'、'.join(invalid)}：價格必須為有效正數")
             opening, high, low, close = prices
             if not low <= min(opening, close) <= max(opening, close) <= high:
-                raise ValueError(f"{bar.trade_date} {prefix}OHLC 高低價關係錯誤")
+                raise ValueError(
+                    f"{bar.trade_date} {label}價格高低關係錯誤："
+                    f"開 {opening}、高 {high}、低 {low}、收 {close}"
+                )
         if bar.volume is None or not math.isfinite(float(bar.volume)) or bar.volume < 0:
-            raise ValueError(f"{bar.trade_date} 成交量無效")
+            raise ValueError(f"{bar.trade_date} 成交量無效：{bar.volume}")
 
 
 def invalidate(db, item_id, rule_ids):

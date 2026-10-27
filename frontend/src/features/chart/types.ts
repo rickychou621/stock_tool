@@ -19,6 +19,7 @@ export interface IndicatorSnapshot {
 export interface TriggerHistoryItem {
   id: number
   ruleName: string
+  state?: string
   triggeredAt: string
   priceAtTrigger: number | null
 }

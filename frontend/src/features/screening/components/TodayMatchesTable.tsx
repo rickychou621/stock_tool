@@ -1,3 +1,4 @@
+import { formatTaipeiTime } from '../../../lib/time'
 import { RuleStateBadge } from '../../rules/components/RuleStateBadge'
 import { Link } from 'react-router-dom'
 import { AddToWatchlistButton } from '../../watchlist/components/AddToWatchlistButton'
@@ -41,7 +42,7 @@ export function TodayMatchesTable({ items }: TodayMatchesTableProps) {
                   item.ruleName
                 )}
               </td>
-              <td>{item.triggeredAt}</td>
+              <td>{formatTaipeiTime(item.triggeredAt)}</td>
               <td>{item.priceAtTrigger}</td>
               <td>
                 <AddToWatchlistButton ticker={item.ticker} />

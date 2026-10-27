@@ -1,3 +1,4 @@
+import { daysSinceTaipei, formatTaipeiTime, parseUtcTime } from '../../lib/time'
 import { PageHeader } from '../../components/PageHeader'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '../../api/client'
@@ -21,6 +22,13 @@ export function CandidatePoolPage() {
       apiClient.post<CandidateRefreshSummary>(`/screening/candidates/refresh?limit=${LIST_LIMIT}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['screening-candidates'] }),
   })
+
+  const latestAddedAt = candidatePool.data?.reduce((latest, item) => {
+    const timestamp = parseUtcTime(item.addedAt).getTime()
+    return Number.isFinite(timestamp) && (!latest || timestamp > parseUtcTime(latest).getTime())
+      ? item.addedAt : latest
+  }, '')
+  const staleDays = latestAddedAt ? daysSinceTaipei(latestAddedAt) : 0
 
   return (
     <section>
@@ -62,6 +70,11 @@ export function CandidatePoolPage() {
         {candidatePool.isLoading && <p className="muted">讀取中...</p>}
         {candidatePool.isError && (
           <p className="error-text">讀取失敗，請確認 backend 是否運行中。</p>
+        )}
+        {staleDays >= 1 && (
+          <p className="status-warning">
+            候選池資料已 {staleDays} 天未更新（最後更新 {formatTaipeiTime(latestAddedAt)}）。
+          </p>
         )}
         {candidatePool.data && <CandidatePoolTable items={candidatePool.data} />}
       </div>

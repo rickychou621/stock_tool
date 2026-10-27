@@ -678,8 +678,16 @@ def test_validate_bars_rejects_invalid_high_low(factory, prefix):
     with factory() as db:
         bars = MarketDataRepository(db).get_all_bars("2330")
         setattr(bars[-2], prefix + "high", 80)
-        with pytest.raises(ValueError, match="OHLC 高低價關係錯誤"):
+        label = "還原" if prefix else ""
+        bar = bars[-2]
+        expected = (
+            f"{bar.trade_date} {label}價格高低關係錯誤："
+            f"開 {getattr(bar, prefix + 'open')}、高 80、"
+            f"低 {getattr(bar, prefix + 'low')}、收 {getattr(bar, prefix + 'close')}"
+        )
+        with pytest.raises(ValueError) as error:
             validate_bars(bars, DAY)
+        assert str(error.value) == expected
 
 
 @pytest.mark.parametrize("volume", [0, 405])
@@ -951,3 +959,34 @@ def test_manual_scan_only_records_entry(factory, monkeypatch, state_name):
             assert match.id is None and match.is_notified is False
             alert = db.scalar(select(AlertLog))
             assert alert.state == "ENTRY" and alert.message == "原有告警"
+
+
+@pytest.mark.parametrize("prefix", ["", "adj_"])
+def test_validate_bars_names_invalid_prices(factory, prefix):
+    from app.market_data.repository import MarketDataRepository
+
+    seed_bars(factory)
+    with factory() as db:
+        bars = MarketDataRepository(db).get_all_bars("2330")
+        bar = bars[-2]
+        setattr(bar, prefix + "open", 0)
+        setattr(bar, prefix + "close", None)
+        label = "還原" if prefix else ""
+        with pytest.raises(ValueError) as error:
+            validate_bars(bars, DAY)
+        assert str(error.value) == (
+            f"{bar.trade_date} {label}開盤價=0、{label}收盤價=None：價格必須為有效正數"
+        )
+
+
+@pytest.mark.parametrize("volume", [-1, None, float("nan"), float("inf")])
+def test_validate_bars_names_invalid_volume(factory, volume):
+    from app.market_data.repository import MarketDataRepository
+
+    seed_bars(factory)
+    with factory() as db:
+        bars = MarketDataRepository(db).get_all_bars("2330")
+        bars[-2].volume = volume
+        with pytest.raises(ValueError) as error:
+            validate_bars(bars, DAY)
+        assert str(error.value) == f"{bars[-2].trade_date} 成交量無效：{volume}"

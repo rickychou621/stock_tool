@@ -5,6 +5,10 @@ import {
   LineSeries,
   LineStyle,
   createChart,
+  createSeriesMarkers,
+  type IPriceLine,
+  type ISeriesMarkersPluginApi,
+  type SeriesMarker,
   type CandlestickData,
   type IChartApi,
   type ISeriesApi,
@@ -63,6 +67,8 @@ interface MacdInfo {
 }
 
 interface StockChartProps {
+  priceLines?: { price: number; title: string; color: string }[]
+  markers?: { date: string; state: string; ruleName: string }[]
   bars: PriceBar[]
   emaVisibility: EmaVisibility
   bollingerVisible: boolean
@@ -71,10 +77,16 @@ interface StockChartProps {
 
 export function StockChart({
   bars,
+  priceLines,
+  markers,
   emaVisibility,
   bollingerVisible,
   subPanelIndicator,
 }: StockChartProps) {
+  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const priceLinesRef = useRef<IPriceLine[]>([])
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
+  const [date, setDate] = useState('')
   const containerRef = useRef<HTMLDivElement>(null)
   const emaSeriesRef = useRef<Record<keyof EmaVisibility, ISeriesApi<'Line'> | null>>({
     ema10: null,
@@ -140,6 +152,8 @@ export function StockChart({
       close: bar.close,
     }))
     candleSeries.setData(candleData)
+    candleSeriesRef.current = candleSeries
+    markersRef.current = createSeriesMarkers(candleSeries, [])
 
     const emaPeriods: Array<[keyof EmaVisibility, number]> = [
       ['ema10', 10],
@@ -273,6 +287,8 @@ export function StockChart({
 
     // 預設(還沒hover時)顯示最後一根K棒/最新KD、MACD值，跟大部分看盤軟體行為一致。
     const lastCandle = candleData[candleData.length - 1]
+    const latestDate = bars[bars.length - 1].date.replaceAll('-', '/')
+    setDate(latestDate)
     setOhlcInfo({
       open: lastCandle.open,
       high: lastCandle.high,
@@ -288,6 +304,7 @@ export function StockChart({
     // 滑鼠離開圖表範圍時(param.time為undefined)則還原成顯示最新一根的數值。
     const handleCrosshairMove: Parameters<typeof chart.subscribeCrosshairMove>[0] = (param) => {
       if (!param.time) {
+        setDate(latestDate)
         setOhlcInfo({
           open: lastCandle.open,
           high: lastCandle.high,
@@ -301,6 +318,11 @@ export function StockChart({
 
       const candlePoint = param.seriesData.get(candleSeries) as CandlestickData<Time> | undefined
       if (candlePoint) {
+        const time = candlePoint.time
+        setDate(typeof time === 'object'
+          ? `${time.year}/${String(time.month).padStart(2, '0')}/${String(time.day).padStart(2, '0')}`
+          : typeof time === 'string' ? time.replaceAll('-', '/')
+            : new Date(time * 1000).toISOString().slice(0, 10).replaceAll('-', '/'))
         setOhlcInfo({
           open: candlePoint.open,
           high: candlePoint.high,
@@ -338,12 +360,44 @@ export function StockChart({
     return () => {
       resizeObserver.disconnect()
       chart.unsubscribeCrosshairMove(handleCrosshairMove)
+      markersRef.current = null
+      candleSeriesRef.current = null
+      priceLinesRef.current = []
       chart.remove()
     }
     // 只在bars變動時重建整個圖表；emaVisibility/bollingerVisible/subPanelIndicator的變化
     // 交給下面那幾個effect用applyOptions切換，不需要重新建圖表。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bars])
+
+  useEffect(() => {
+    const series = candleSeriesRef.current
+    if (!series) return
+    priceLinesRef.current.forEach((line) => series.removePriceLine(line))
+    priceLinesRef.current = (priceLines ?? []).map((line) => series.createPriceLine({
+      ...line, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true,
+    }))
+  }, [bars, priceLines])
+
+  useEffect(() => {
+    const seen = new Set<string>()
+    const points: SeriesMarker<Time>[] = (markers ?? [])
+      .filter((marker) => {
+        if (!bars.length || marker.date < bars[0].date || marker.date > bars[bars.length - 1].date
+          || (marker.state !== 'ENTRY' && marker.state !== 'EXIT') || seen.has(marker.date)) return false
+        seen.add(marker.date)
+        return true
+      })
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((marker) => ({
+        time: marker.date,
+        position: marker.state === 'ENTRY' ? 'belowBar' : 'aboveBar',
+        shape: marker.state === 'ENTRY' ? 'arrowUp' : 'arrowDown',
+        color: marker.state === 'ENTRY' ? UP_COLOR : DOWN_COLOR,
+        text: marker.state === 'ENTRY' ? '進' : '出',
+      }))
+    markersRef.current?.setMarkers(points)
+  }, [bars, markers])
 
   useEffect(() => {
     ;(Object.keys(emaVisibility) as Array<keyof EmaVisibility>).forEach((key) => {
@@ -367,12 +421,14 @@ export function StockChart({
     macdSeriesRef.current.histogram?.applyOptions({ visible: showMacd })
   }, [subPanelIndicator])
 
+  const isLatest = date === bars[bars.length - 1]?.date.replaceAll('-', '/')
   const isUp = ohlcInfo ? ohlcInfo.close >= ohlcInfo.open : true
 
   return (
     <div>
       {ohlcInfo && (
         <div className="chart-info-line" style={{ color: isUp ? UP_COLOR : DOWN_COLOR }}>
+          <span>{date}{isLatest ? '（最新）' : ''}</span>
           <span>開 {ohlcInfo.open}</span>
           <span>高 {ohlcInfo.high}</span>
           <span>低 {ohlcInfo.low}</span>
@@ -382,12 +438,14 @@ export function StockChart({
       <div ref={containerRef} style={{ height: 480, width: '100%' }} />
       {subPanelIndicator === 'kd' && kdInfo && (
         <div className="chart-info-line">
+          <span>{date}{isLatest ? '（最新）' : ''}</span>
           <span style={{ color: KD_COLORS.k }}>K(9) {kdInfo.k}</span>
           <span style={{ color: KD_COLORS.d }}>D(9) {kdInfo.d}</span>
         </div>
       )}
       {subPanelIndicator === 'macd' && macdInfo && (
         <div className="chart-info-line">
+          <span>{date}{isLatest ? '（最新）' : ''}</span>
           <span style={{ color: MACD_COLORS.dif }}>DIF {macdInfo.dif}</span>
           <span style={{ color: MACD_COLORS.signal }}>MACD訊號線 {macdInfo.signal}</span>
           <span

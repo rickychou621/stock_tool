@@ -1,3 +1,4 @@
+import { formatTaipeiTime } from '../../lib/time'
 import { Fragment, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '../../api/client'
@@ -22,10 +23,6 @@ const states: Record<string, string> = {
   reentered: '再次符合',
   not_met: '未符合',
 }
-const taipeiTime = (value: string) => new Intl.DateTimeFormat('zh-TW', {
-  timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',
-  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-}).format(new Date(value))
 const statusLabels = { closed: '已完成', open: '持有中', unfilled: '未成交' }
 const metricHeaders = ['交易次數', '淨勝率', '平均淨報酬', '淨複利報酬', '淨最大回撤', '淨獲利因子', '同期 0050 買進持有']
 function CostInfo({ costs }: { costs: CostSnapshot | null }) {
@@ -232,7 +229,7 @@ export function BacktestPage() {
       {staleInfo && (
         <div className="backtest-stale-banner" role="status">
           <span>{staleInfo.reason === 'definition' && staleInfo.changedAt
-            ? `戰法定義已於 ${taipeiTime(staleInfo.changedAt)}（台北時間）變更，以下結果已過期。`
+            ? `戰法定義已於 ${formatTaipeiTime(staleInfo.changedAt)}（台北時間）變更，以下結果已過期。`
             : '以下結果已過期，請重新回測。'}</span>
           <button
             className="button-primary"

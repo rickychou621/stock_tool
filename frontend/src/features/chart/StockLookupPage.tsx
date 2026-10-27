@@ -17,6 +17,9 @@ import { calculateEMA, calculateKD } from './utils/indicators'
 
 const CHART_BAR_LIMIT = 120
 const TRIGGER_HISTORY_LIMIT = 10
+const LAST_TICKER_KEY = 'stock-lookup:last-ticker'
+const EXIT_COLOR = '#991b1b'
+const taipeiDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' })
 
 export function StockLookupPage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -24,7 +27,14 @@ export function StockLookupPage() {
   const from = (location.state as { from?: string } | null)?.from ?? '/'
   const tickerFromUrl = searchParams.get('ticker')
 
-  const [selectedTicker, setSelectedTicker] = useState(tickerFromUrl ?? '')
+  const [selectedTicker, setSelectedTicker] = useState(() => {
+    if (tickerFromUrl) return tickerFromUrl
+    try {
+      return localStorage.getItem(LAST_TICKER_KEY) ?? ''
+    } catch {
+      return ''
+    }
+  })
   const [selectedName, setSelectedName] = useState('')
   const [searchInput, setSearchInput] = useState<string | null>(null)
   const [debouncedSearch, setDebouncedSearch] = useState('')
@@ -61,6 +71,16 @@ export function StockLookupPage() {
       setSelectedTicker(stocksQuery.data[0].ticker)
     }
   }, [selectedTicker, stocksQuery.data])
+
+  useEffect(() => {
+    if (!selectedTicker) return
+    try {
+      localStorage.setItem(LAST_TICKER_KEY, selectedTicker)
+    } catch {
+      // 儲存不可用時仍可查詢股票。
+    }
+    if (!tickerFromUrl) setSearchParams({ ticker: selectedTicker }, { replace: true })
+  }, [selectedTicker, tickerFromUrl, setSearchParams])
 
   const handleSelectTicker = (ticker: string) => {
     setSelectedTicker(ticker)
@@ -109,6 +129,19 @@ export function StockLookupPage() {
       ),
     enabled: Boolean(selectedTicker),
   })
+
+  const priceLines = ruleStates.flatMap((query, index) => {
+    const price = query.data?.state?.triggerPrice
+    return price == null ? [] : [{ price, title: `${enabledRules[index].name} 觸價`, color: EXIT_COLOR }]
+  })
+  const markers = useMemo(() => (triggerHistoryQuery.data ?? []).flatMap((item) => {
+    if (!item.state) return []
+    const utcTime = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(item.triggeredAt)
+      ? item.triggeredAt : `${item.triggeredAt}Z`
+    const timestamp = new Date(utcTime)
+    if (Number.isNaN(timestamp.getTime())) return []
+    return [{ date: taipeiDate.format(timestamp), state: item.state, ruleName: item.ruleName }]
+  }), [triggerHistoryQuery.data])
 
   const bars = useMemo(() => chartQuery.data ?? [], [chartQuery.data])
 
@@ -222,6 +255,8 @@ export function StockLookupPage() {
         {bars.length > 0 && (
           <StockChart
             bars={bars}
+            priceLines={priceLines}
+            markers={markers}
             emaVisibility={emaVisibility}
             bollingerVisible={bollingerVisible}
             subPanelIndicator={subPanelIndicator}
@@ -230,7 +265,7 @@ export function StockLookupPage() {
       </div>
 
       <div className="card">
-        <h3>目前技術指標</h3>
+        <h3>目前技術指標{bars.length > 0 ? `（${bars[bars.length - 1].date.replaceAll('-', '/')}，日K）` : ''}</h3>
         {indicators && <IndicatorSummary indicators={indicators} />}
       </div>
 
