@@ -2,6 +2,8 @@ import { Fragment, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '../../api/client'
 import { PageHeader } from '../../components/PageHeader'
+import { EquityCurveChart } from './EquityCurveChart'
+import { TradeKlineChart } from './TradeKlineChart'
 import { summarizeRule } from './summary'
 import type { WatchRule } from '../rules/types'
 import type { CostSnapshot, Detail, Metrics, Report, StockPerformance } from './types'
@@ -87,6 +89,16 @@ function TradeDetails({ stock, batch }: { stock: StockPerformance; batch: string
           <CostInfo costs={data.costSnapshot} />
           {data.warnings.map((w) => <p key={w} className="backtest-warning">{w}</p>)}
           {data.benchmarkReason && <p className="muted">{data.benchmarkReason}</p>}
+          <div className="backtest-charts">
+            <section>
+              <h3>資金曲線</h3>
+              <EquityCurveChart curve={data.equityCurve} />
+            </section>
+            <section>
+              <h3>K 線與買賣點</h3>
+              <TradeKlineChart ticker={stock.ticker} start={stock.actualStart} end={stock.actualEnd} markers={data.tradeMarkers} />
+            </section>
+          </div>
           <div className="table-scroll">
             <table className="data-table">
               <thead>

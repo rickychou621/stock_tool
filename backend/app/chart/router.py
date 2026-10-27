@@ -1,6 +1,9 @@
+from datetime import date
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.chart.repository import ChartRepository
 from app.chart.schemas import PriceBarSchema
 from app.chart.service import ChartService
 from app.core.dependencies import get_db
@@ -12,10 +15,15 @@ router = APIRouter(prefix="/chart", tags=["chart"])
 def get_price_history(
     ticker: str,
     limit: int = Query(120, ge=1, le=500),
+    start: date | None = None,
+    end: date | None = None,
     db: Session = Depends(get_db),
 ) -> list[PriceBarSchema]:
     service = ChartService(db)
-    bars = service.get_price_history(ticker, limit)
+    bars = (
+        ChartRepository(db).get_daily_bars_in_range(ticker, start, end)
+        if start is not None else service.get_price_history(ticker, limit)
+    )
     return [
         PriceBarSchema(
             date=bar.trade_date,

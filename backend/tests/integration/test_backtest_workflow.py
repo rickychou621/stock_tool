@@ -539,3 +539,59 @@ def test_overall_compound_return_is_median_of_stocks(factory):
         assert group["metrics"]["compoundReturn"] == pytest.approx(0.3)
         assert group["grossMetrics"]["compoundReturn"] == pytest.approx(0.4)
         assert "compounds" not in group and "grossCompounds" not in group
+
+
+@pytest.mark.parametrize("benchmark_kind", ["present", "empty", "missing_start"])
+def test_detail_equity_curve_and_markers_ignore_pagination(factory, benchmark_kind):
+    manager = make_manager(factory)
+    manager.start([1], now=NOW)
+    manager.close()
+    with factory() as db:
+        row = db.scalar(select(BacktestResult))
+        result = copy.deepcopy(row.payload)
+        result["trades"] = [
+            dict(status="closed", entryDate="2026-10-08", exitDate=day, netReturnRate=rate)
+            for day, rate in [("2026-10-10", -0.1), ("2026-10-09", 0.2),
+                              ("2026-10-09", 0.1), ("2026-10-11", None)]
+        ] + [dict(status="open", entryDate="2026-10-11", netReturnRate=0.5),
+             dict(status="unfilled", entryDate=None, netReturnRate=None)]
+        row.payload = result
+        benchmark = {
+            "2026-10-07": {"open": 10, "close": 10},
+            "2026-10-08": {"open": 100, "close": 110},
+            "2026-10-12": {"open": 110, "close": 120},
+            "2026-10-13": {"open": 120, "close": 130},
+        }
+        if benchmark_kind == "empty":
+            benchmark = {}
+        elif benchmark_kind == "missing_start":
+            del benchmark["2026-10-08"]
+        db.get(BacktestTask, 1).context_json = {"benchmark": benchmark}
+        db.commit()
+        result_id = db.scalar(select(BacktestResult.id))
+
+    def dependency():
+        with factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = dependency
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/backtests/results/{result_id}?offset=1&limit=1")
+            assert response.status_code == 200
+            detail = response.json()
+            curve = detail["equityCurve"]
+            assert [p["date"] for p in curve["strategy"]] == [
+                "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-12",
+            ]
+            assert [p["value"] for p in curve["strategy"]] == pytest.approx([
+                1.0, 1.2 * 1.1, 1.2 * 1.1 * 0.9, 1.2 * 1.1 * 0.9,
+            ])
+            assert curve["benchmark"] == ([
+                {"date": "2026-10-08", "value": 1.1},
+                {"date": "2026-10-12", "value": 1.2},
+            ] if benchmark_kind == "present" else [])
+            assert len(detail["trades"]) == 1
+            assert len(detail["tradeMarkers"]) == 9
+    finally:
+        app.dependency_overrides.clear()

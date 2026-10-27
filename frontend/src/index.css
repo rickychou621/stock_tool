@@ -953,3 +953,23 @@ details li + li {
 }
 .backtest-stale { opacity: .6; }
 .stale-mark { color: var(--warning); margin-left: .3rem; cursor: help; }
+
+.backtest-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+.backtest-charts > section { min-width: 0; }
+/* lightweight-charts lays out with an internal <table>; keep .data-table cell styles out of it. */
+.data-table .backtest-charts td,
+.data-table .backtest-charts tr:last-child td {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  vertical-align: baseline;
+  white-space: normal;
+}
+.data-table .backtest-charts tr:hover { background: none; }
+.backtest-chart-legend { display: flex; gap: 1rem; color: var(--accent); }
+.backtest-chart-legend span:last-child { color: #888888; }
+.backtest-chart-legend span.buy { color: #d03b3b; }
+.backtest-chart-legend span.sell { color: #0ca30c; }
+@media (max-width: 900px) {
+  .backtest-charts { grid-template-columns: minmax(0, 1fr); }
+}

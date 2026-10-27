@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import Field
 from sqlalchemy.orm import Session
 
-from app.backtest.models import BacktestResult
-from app.backtest.service import BacktestBusy, manager, read_report
+from app.backtest.models import BacktestResult, BacktestTask
+from app.backtest.service import BacktestBusy, build_equity_curve, manager, read_report
 from app.core.dependencies import get_db
 from app.core.schemas import CamelModel
 
@@ -43,7 +43,21 @@ def detail(
     if expected_batch_id is not None and row.batch_id != expected_batch_id:
         raise HTTPException(409, "結果已更新，請重新整理後查看明細")
     payload = row.payload
+    task = db.get(BacktestTask, 1)
+    benchmark = (task.context_json or {}).get("benchmark", {}) if task else {}
     return dict(
+        equityCurve=build_equity_curve(
+            payload["trades"], row.summary["actualStart"], row.summary["actualEnd"], benchmark,
+        ),
+        tradeMarkers=[
+            {"date": day, "side": side}
+            for trade in payload["trades"]
+            for day, side in (
+                (trade.get("entryDate") if trade["status"] != "unfilled" else None, "buy"),
+                (trade.get("exitDate") if trade["status"] == "closed" else None, "sell"),
+            )
+            if day is not None
+        ],
         needsRerun=payload.get("schemaVersion") != 2,
         costSnapshot=payload.get("costSnapshot"),
         warnings=payload.get("warnings", []),

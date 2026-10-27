@@ -484,3 +484,39 @@ def test_scan_progress_counts_stocks_after_all_rules_and_excludes_etfs(context, 
     assert evaluated[0] == evaluated[1]
     assert evaluated[2] == evaluated[3]
     assert "2454" not in evaluated
+
+
+def test_chart_date_range_and_legacy_limit(context):
+    client, db, *_ = context
+    start = date.today() - timedelta(days=20)
+    end = date.today() - timedelta(days=10)
+    response = client.get(f"/chart/2330?start={start}&end={end}&limit=1")
+    assert response.status_code == 200
+    bars = response.json()
+    assert len(bars) == 11
+    assert bars[0]["date"] == start.isoformat()
+    assert bars[-1]["date"] == end.isoformat()
+    assert [b["date"] for b in bars] == sorted(b["date"] for b in bars)
+    assert len(client.get(f"/chart/2330?start={start}").json()) == 20
+    latest = client.get("/chart/2330?limit=2").json()
+    assert len(latest) == 2
+    assert latest[-1]["date"] == (date.today() - timedelta(days=1)).isoformat()
+    assert client.get("/chart/2330?limit=501").status_code == 422
+    assert client.get("/chart/2330?start=invalid").status_code == 422
+    assert client.get(f"/chart/2330?start={end}&end={start}").json() == []
+
+
+def test_chart_date_range_caps_at_1000_and_uses_adjusted_prices(context):
+    client, db, *_ = context
+    start = date(2000, 1, 1)
+    for i in range(1005):
+        db.add(StockPriceDaily(
+            ticker="2330", trade_date=start + timedelta(days=i),
+            open=100, high=120, low=90, close=110, volume=1000,
+            adj_open=10, adj_high=12, adj_low=9, adj_close=11,
+        ))
+    db.commit()
+    bars = client.get(f"/chart/2330?start={start}").json()
+    assert len(bars) == 1000
+    assert bars[0] == dict(date="2000-01-01", open=10, high=12, low=9, close=11, volume=1000)
+    assert bars[-1]["date"] == (start + timedelta(days=999)).isoformat()

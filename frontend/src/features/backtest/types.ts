@@ -78,7 +78,17 @@ export interface Trade {
   valuationDate: string | null
   pendingSide: 'buy' | 'sell' | null
 }
+export interface EquityCurve {
+  strategy: { date: string; value: number }[]
+  benchmark: { date: string; value: number }[]
+}
+export interface TradeMarker {
+  date: string
+  side: 'buy' | 'sell'
+}
 export interface Detail {
+  equityCurve: EquityCurve
+  tradeMarkers: TradeMarker[]
   batchId: string
   stale: boolean
   needsRerun: boolean

@@ -531,3 +531,26 @@ def read_report(db):
 
 
 manager = BacktestManager()
+
+
+def build_equity_curve(trades: list[dict], start: str, end: str, benchmark: dict) -> dict:
+    values = {start: 1.0}
+    value = 1.0
+    closed = sorted(
+        (t for t in trades if t["status"] == "closed"
+         and t.get("netReturnRate") is not None and t.get("exitDate")),
+        key=lambda t: t["exitDate"],
+    )
+    for trade in closed:
+        value *= 1 + trade["netReturnRate"]
+        values[trade["exitDate"]] = value
+    if max(values) < end:
+        values[end] = value
+    opening = benchmark.get(start, {}).get("open")
+    return {
+        "strategy": [{"date": day, "value": amount} for day, amount in sorted(values.items())],
+        "benchmark": [
+            {"date": day, "value": bar["close"] / opening}
+            for day, bar in sorted(benchmark.items()) if start <= day <= end
+        ] if opening else [],
+    }
