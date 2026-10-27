@@ -58,16 +58,22 @@ export function WatchlistSchedule({ rules }: { rules: WatchRule[] | undefined })
     save.reset()
   }
   return (
-    <div className="card schedule-card">
-      <div className="schedule-heading">
-        <div>
-          <h2>每日自動更新</h2>
-          <p className="muted">台灣交易日 18:00 更新觀察清單，再評估所選戰法。</p>
-        </div>
+    <details
+      className="card schedule-card"
+      open={!!run && (run.errors.length > 0 || run.status === 'failed')}
+    >
+      <summary className="schedule-heading">
+        <strong>每日自動更新</strong>
         <span className={`schedule-status ${settings.data?.enabled ? 'schedule-enabled' : ''}`}>
           {settings.data ? (settings.data.enabled ? '已啟用' : '已停用') : '讀取中'}
         </span>
-      </div>
+        {run && (
+          <span className="muted">
+            最近一次：{statuses[run.status] ?? run.status} · {displayTime(run.startedAt)}
+          </span>
+        )}
+      </summary>
+      <p className="muted">台灣交易日 18:00 更新觀察清單，再評估所選戰法。</p>
       {settings.isError && (
         <p role="alert" className="error-text">
           排程設定讀取失敗，請重新整理。
@@ -112,7 +118,8 @@ export function WatchlistSchedule({ rules }: { rules: WatchRule[] | undefined })
               )}
           </fieldset>
           <p className="muted">
-            未選戰法時只更新最近一年行情。儲存後於下次排程生效；排程完成後以 Telegram 發送出場訊號與明日觸價價位。
+            未選戰法時只更新最近一年行情。儲存後於下次排程生效；排程完成後以 Telegram
+            發送出場訊號與明日觸價價位。
           </p>
           <button
             className="button-primary"
@@ -171,6 +178,6 @@ export function WatchlistSchedule({ rules }: { rules: WatchRule[] | undefined })
           </>
         )}
       </div>
-    </div>
+    </details>
   )
 }

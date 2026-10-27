@@ -1,5 +1,5 @@
 import { mostUrgent, STATE_LABELS, STATE_URGENCY, type RuleStateCode } from '../rules/state'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { PageHeader } from '../../components/PageHeader'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -25,6 +25,7 @@ export function WatchlistPage() {
   const client = useQueryClient()
   const [params, setParams] = useSearchParams()
   const [filter, setFilter] = useState<RuleStateCode | 'all'>('all')
+  const stateCountsRef = useRef<HTMLDivElement>(null)
   const [sector, setSector] = useState('all')
   const [sort, setSort] = useState('urgent')
   const operation = useQuery<Operation>({
@@ -150,35 +151,47 @@ export function WatchlistPage() {
   return (
     <section>
       <PageHeader title="觀察清單" description="先檢查追蹤股票，再從掃描結果發現新機會。" />
+      <div className="overview-grid">
+        {(
+          [
+            ['EXIT', '今日該出場', '收盤跌破出場條件'],
+            ['ENTRY', '今日進場訊號', '續抱與進場條件都成立'],
+            ['NEAR_EXIT', '接近觸價', '距離出場價 3% 以內'],
+          ] as const
+        ).map(([state, title, description]) => (
+          <button
+            key={state}
+            type="button"
+            className={`overview-tile summary-card summary-card--${state.toLowerCase()}`}
+            aria-pressed={filter === state}
+            onClick={() => {
+              setFilter(filter === state ? 'all' : state)
+              stateCountsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }}
+          >
+            <span>{title}</span>
+            <strong>
+              {watchlist.isLoading ||
+              watchlist.isError ||
+              rules.isLoading ||
+              rules.isError ||
+              saved.isLoading ||
+              saved.isError
+                ? '—'
+                : counts[state]}
+              <small> 檔</small>
+            </strong>
+            <small className="muted">{description}</small>
+          </button>
+        ))}
+      </div>
+      <p className="muted">
+        追蹤 {items.length} 檔，選定戰法皆完成判斷 {complete} 檔。
+      </p>
       <p className="muted">
         新增或進入清單不會自動評估。前往<Link to="/matches">今日符合戰法清單</Link>掃描新機會。
       </p>
       <WatchlistSchedule rules={rules.data} />
-      <div className="overview-grid">
-        <div className="overview-tile">
-          <span>追蹤股票</span>
-          <strong>
-            {watchlist.isLoading || watchlist.isError ? '—' : items.length}
-            <small> 檔</small>
-          </strong>
-        </div>
-        <div className="overview-tile">
-          <span>選定戰法皆完成判斷</span>
-          <strong>
-            {saved.isLoading || saved.isError ? '—' : complete}
-            <small> 檔</small>
-          </strong>
-        </div>
-        <div className="overview-tile">
-          <span>整體狀態為進場</span>
-          <strong>
-            {saved.isLoading || saved.isError
-              ? '—'
-              : items.filter((i) => statusFor(i) === 'ENTRY').length}
-            <small> 檔</small>
-          </strong>
-        </div>
-      </div>
       <div className="card">
         <fieldset disabled={busy}>
           <legend>評估戰法（可複選）</legend>
@@ -214,7 +227,7 @@ export function WatchlistPage() {
             {progress}
           </p>
         )}
-        <div className="state-counts" aria-label="股票狀態計數">
+        <div ref={stateCountsRef} className="state-counts" aria-label="股票狀態計數">
           {stateCodes.map((state) => (
             <button
               key={state}
