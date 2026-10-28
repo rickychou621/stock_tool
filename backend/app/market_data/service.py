@@ -1,3 +1,7 @@
+import random
+import time
+from decimal import Decimal
+
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
@@ -5,6 +9,8 @@ from app.data_source.finmind_client import FinMindClient
 from app.market_data.models import Stock, StockPriceEvent
 from app.market_data.price_adjustment import DividendEvent, PriceBar, PriceEvent, apply_adjustment
 from app.market_data.repository import MarketDataRepository
+
+_sleep = time.sleep
 
 
 class MarketDataService:
@@ -25,19 +31,41 @@ class MarketDataService:
         if start_date is not None:
             return self._sync_validated_range(ticker, start_date, end_date, fetch_prices)
 
+        self._db.rollback()
         bars = self._client.get_daily_price(ticker, days=days)
-        # Invalidate saved evaluations before any committed price/dividend changes.
-        self._db.execute(
-            update(Stock).where(Stock.ticker == ticker).values(data_version=Stock.data_version + 1)
-        )
-        self._db.commit()
-        rows_synced = self._repository.upsert_daily_bars(ticker, bars)
-
         events = self._client.get_dividend_events(ticker, days=max(days, 730))
-        self._repository.upsert_dividend_events(ticker, events)
+        return self._sync_rows(ticker, bars, events, validate=False)
 
-        self._recalculate_adjusted_prices(ticker)
-        return rows_synced
+    def _data_snapshot(self, ticker):
+        from app.market_data.models import StockDividendEvent, StockPriceDaily
+
+        result = []
+        for model, date_field in (
+            (StockPriceDaily, "trade_date"),
+            (StockDividendEvent, "ex_dividend_date"),
+        ):
+            columns = [
+                c for c in model.__table__.columns if c.name not in ("id", "ticker", "created_at")
+            ]
+            stmt = select(*columns).where(model.ticker == ticker)
+            result.append(
+                tuple(
+                    tuple(
+                        v if v is None or c.name == date_field else Decimal(str(v))
+                        for c, v in zip(columns, row, strict=True)
+                    )
+                    for row in self._db.execute(stmt.order_by(getattr(model, date_field)))
+                )
+            )
+        return tuple(result)
+
+    def _bump_if_changed(self, ticker, before):
+        if before != self._data_snapshot(ticker):
+            self._db.execute(
+                update(Stock)
+                .where(Stock.ticker == ticker)
+                .values(data_version=Stock.data_version + 1)
+            )
 
     def _recalculate_adjusted_prices(self, ticker: str, *, validate=False) -> None:
         """用目前DB裡存的全部日K+股利事件重算還原股價，蓋掉整段歷史
@@ -89,8 +117,6 @@ class MarketDataService:
         from datetime import timedelta
         from math import isfinite
 
-        from sqlalchemy.exc import OperationalError
-
         from app.market_data.validation import valid_ohlcv
 
         self._db.rollback()  # End any read snapshot before waiting for the API budget.
@@ -121,29 +147,33 @@ class MarketDataService:
                 if k != "ex_dividend_date"
             ):
                 raise ValueError("FinMind 股利資料無效，未寫入")
+        return self._sync_rows(ticker, bars, events, validate=True)
+
+    def _sync_rows(self, ticker, bars, events, *, validate):
+        from sqlalchemy.exc import OperationalError
+
         original_repository = self._repository
         self._repository = MarketDataRepository(self._db, commit=False)
         try:
-            for attempt in range(3):
+            for attempt in range(4):
                 try:
-                    # Serialize stage-three same-stock writes; unique keys also protect upserts.
+                    # Serialize same-stock writes; unique keys also protect upserts.
                     self._db.execute(
                         select(Stock.id).where(Stock.ticker == ticker).with_for_update()
                     )
+                    before = self._data_snapshot(ticker)
                     self._repository.upsert_daily_bars(ticker, bars)
                     self._repository.upsert_dividend_events(ticker, events)
-                    self._recalculate_adjusted_prices(ticker, validate=True)
-                    self._db.execute(
-                        update(Stock)
-                        .where(Stock.ticker == ticker)
-                        .values(data_version=Stock.data_version + 1)
-                    )
+                    self._db.expire_all()
+                    self._recalculate_adjusted_prices(ticker, validate=validate)
+                    self._bump_if_changed(ticker, before)
                     self._db.commit()
                     return len(bars)
                 except OperationalError as exc:
                     self._db.rollback()
-                    if attempt == 2 or getattr(exc.orig, "args", [None])[0] not in (1205, 1213):
+                    if attempt == 3 or getattr(exc.orig, "args", [None])[0] not in (1205, 1213):
                         raise
+                    _sleep(random.uniform(0.2, 1.0) * (attempt + 1))
                 except Exception:
                     self._db.rollback()
                     raise
@@ -201,9 +231,25 @@ class MarketDataService:
         # Filling a missing historical day after the last known dividend cannot
         # change any adjustment factor. Its raw OHLC is already the correct basis.
         # Revisions and inserts preceding a known event still recalculate history.
-        recalculate = {
-            t for t, last in latest.items() if last >= day and (t in old or t in later_events)
+        revised = {
+            r["ticker"]
+            for r in rows
+            if r["ticker"] in old
+            and any(
+                Decimal(str(r[k])) != Decimal(str(getattr(old[r["ticker"]], k)))
+                for k in ("open", "high", "low", "close")
+            )
         }
+        recalculate = {
+            t
+            for t, last in latest.items()
+            if last >= day and (t in revised or t in later_events and t not in old)
+        }
+        recalculate.update(
+            t
+            for t, bar in old.items()
+            if any(getattr(bar, f"adj_{k}") is None for k in ("open", "high", "low", "close"))
+        )
         recalculate.update(t for t, ex in event_dates if t in latest and latest[t] < ex <= day)
         warnings, prepared = [], []
         for row in rows:
@@ -227,7 +273,29 @@ class MarketDataService:
                 ],
                 [],
             )[day]
+            if previous is not None and ticker not in recalculate:
+                adjusted = {k: getattr(previous, f"adj_{k}") for k in adjusted}
             prepared.append({**row, **{f"adj_{k}": v for k, v in adjusted.items()}})
+        fields = (
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "turnover",
+            "adj_open",
+            "adj_high",
+            "adj_low",
+            "adj_close",
+        )
+
+        def values(bar):
+            return tuple(
+                None if getattr(bar, k) is None else Decimal(str(getattr(bar, k))) for k in fields
+            )
+
+        before = {t: values(bar) for t, bar in old.items()}
+        history = {t: self._data_snapshot(t) for t in recalculate}
         original = self._repository
         self._repository = MarketDataRepository(self._db, commit=False)
         try:
@@ -236,11 +304,22 @@ class MarketDataService:
             self._db.expire_all()
             for ticker in sorted(recalculate):
                 self._recalculate_adjusted_prices(ticker, validate=True)
-            self._db.execute(
-                update(Stock)
-                .where(Stock.ticker.in_(tickers))
-                .values(data_version=Stock.data_version + 1)
-            )
+            changed = {
+                bar.ticker
+                for bar in self._db.scalars(
+                    select(StockPriceDaily).where(
+                        StockPriceDaily.ticker.in_(tickers), StockPriceDaily.trade_date == day
+                    )
+                )
+                if before.get(bar.ticker) != values(bar)
+            }
+            changed.update(t for t in recalculate if history[t] != self._data_snapshot(t))
+            if changed:
+                self._db.execute(
+                    update(Stock)
+                    .where(Stock.ticker.in_(changed))
+                    .values(data_version=Stock.data_version + 1)
+                )
             self._db.flush()
         finally:
             self._repository = original

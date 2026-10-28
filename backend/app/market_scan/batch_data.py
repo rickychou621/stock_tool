@@ -5,7 +5,7 @@ from collections import defaultdict
 from datetime import timedelta
 from time import monotonic
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from app.data_source.finmind_client import FinMindClient
 from app.data_source.twse_client import TwseBatchClient
@@ -146,13 +146,11 @@ def synchronize(
                     if fallback:
                         db.execute(select(Stock.id).where(Stock.ticker == ticker).with_for_update())
                         service._repository = MarketDataRepository(db, commit=False)
+                        before = service._data_snapshot(ticker)
                         service._repository.upsert_dividend_events(ticker, fallback)
+                        db.expire_all()
                         service._recalculate_adjusted_prices(ticker, validate=True)
-                        db.execute(
-                            update(Stock)
-                            .where(Stock.ticker == ticker)
-                            .values(data_version=Stock.data_version + 1)
-                        )
+                        service._bump_if_changed(ticker, before)
                         verify()
                         db.commit()
                         errors.extend(fallback_warnings)

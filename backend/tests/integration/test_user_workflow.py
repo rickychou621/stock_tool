@@ -351,7 +351,7 @@ def test_removed_holding_and_missing_rule_do_not_sync(context, monkeypatch):
     assert calls == []
 
 
-def test_partial_market_update_invalidates_saved_result(context, monkeypatch):
+def test_failed_atomic_market_update_preserves_saved_result(context, monkeypatch):
     from app.data_source.finmind_client import FinMindClient
     from app.market_data.repository import MarketDataRepository
 
@@ -363,6 +363,8 @@ def test_partial_market_update_invalidates_saved_result(context, monkeypatch):
     assert client.get("/watchlist/evaluations").json()[0]["stale"] is False
     monkeypatch.setattr(FinMindClient, "get_daily_price", lambda *a, **kw: [])
 
+    monkeypatch.setattr(FinMindClient, "get_dividend_events", lambda *a, **kw: [])
+
     def fail_write(*args, **kwargs):
         raise RuntimeError("write interrupted")
 
@@ -370,7 +372,7 @@ def test_partial_market_update_invalidates_saved_result(context, monkeypatch):
     with pytest.raises(RuntimeError, match="write interrupted"):
         MarketDataService(db).sync_daily_prices("2330")
     db.rollback()
-    assert client.get("/watchlist/evaluations").json()[0]["stale"] is True
+    assert client.get("/watchlist/evaluations").json()[0]["stale"] is False
 
 
 @pytest.mark.parametrize("count, sizes", [(50, [50]), (51, [50, 1]), (120, [50, 50, 20])])

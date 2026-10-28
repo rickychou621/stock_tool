@@ -17,15 +17,22 @@ class MarketDataRepository:
             return 0
 
         rows = [{"ticker": ticker, **bar} for bar in bars]
-        stmt = mysql_insert(StockPriceDaily).values(rows)
-        stmt = stmt.on_duplicate_key_update(
-            open=stmt.inserted.open,
-            high=stmt.inserted.high,
-            low=stmt.inserted.low,
-            close=stmt.inserted.close,
-            volume=stmt.inserted.volume,
-            turnover=func.coalesce(stmt.inserted.turnover, StockPriceDaily.turnover),
-        )
+        if self._db.bind.dialect.name == "sqlite":
+            from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+            stmt = sqlite_insert(StockPriceDaily).values(rows)
+            incoming = stmt.excluded
+        else:
+            stmt = mysql_insert(StockPriceDaily).values(rows)
+            incoming = stmt.inserted
+        updates = {k: getattr(incoming, k) for k in ("open", "high", "low", "close", "volume")}
+        updates["turnover"] = func.coalesce(incoming.turnover, StockPriceDaily.turnover)
+        if self._db.bind.dialect.name == "sqlite":
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["ticker", "trade_date"], set_=updates
+            )
+        else:
+            stmt = stmt.on_duplicate_key_update(**updates)
         self._db.execute(stmt)
         if self._commit:
             self._db.commit()
