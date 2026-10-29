@@ -1,3 +1,15 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import {
+  faArrowsRotate,
+  faChevronLeft,
+  faChevronRight,
+  faDownload,
+  faFilterCircleXmark,
+  faFloppyDisk,
+  faMagnifyingGlassChart,
+  faRotateLeft,
+} from '@fortawesome/free-solid-svg-icons'
+import { IconButton } from '../../components/IconButton'
 import { isPercentMetric, metricLabel, pickIndicators } from './indicators'
 import { Link } from 'react-router-dom'
 import { formatTaipeiTime } from '../../lib/time'
@@ -102,16 +114,14 @@ function Errors({ kind, version }: { kind: string; version: string }) {
       ))}
       {((query.data?.total ?? 0) > 50 || page > 1) && (
         <div className="market-pagination">
-          <button disabled={page === 1} onClick={() => setPage((p) => p - 1)}>
-            上一頁錯誤
-          </button>
+          <IconButton disabled={page === 1} onClick={() => setPage((p) => p - 1)} icon={faChevronLeft} label="上一頁錯誤" />
           <span>第 {page} 頁</span>
-          <button
+          <IconButton
             disabled={page * 50 >= (query.data?.total ?? 0)}
             onClick={() => setPage((p) => p + 1)}
-          >
-            下一頁錯誤
-          </button>
+            icon={faChevronRight}
+            label="下一頁錯誤"
+         />
         </div>
       )}
     </details>
@@ -257,6 +267,7 @@ export function MarketScanPage() {
             disabled={!settings.data || save.isPending}
             onClick={() => save.mutate()}
           >
+            <FontAwesomeIcon icon={faFloppyDisk} />
             {save.isPending ? '儲存中…' : '儲存自動設定'}
           </button>
           {!automatic.ruleIds.length && <p className="muted">未選戰法時自動略過，保留既有候選。</p>}
@@ -279,9 +290,11 @@ export function MarketScanPage() {
               disabled={busy || !selected.length || !tasks.data || !settings.data}
               onClick={() => start.mutate('run')}
             >
+              <FontAwesomeIcon icon={faMagnifyingGlassChart} />
               開始全市場掃描
             </button>
             <button disabled={!settings.data} onClick={() => setManual(null)}>
+              <FontAwesomeIcon icon={faRotateLeft} />
               沿用自動設定
             </button>
           </div>
@@ -303,13 +316,14 @@ export function MarketScanPage() {
             disabled={busy || !selected.length || !tasks.data || !settings.data}
             onClick={() => start.mutate('initialize')}
           >
+            <FontAwesomeIcon icon={faDownload} />
             下載歷史行情
           </button>
         </div>
         <button className="button-add" disabled={busy || !selected.length || !tasks.data || !settings.data}
-          onClick={() => start.mutate('dividends')}>補齊歷史股利</button>
+          onClick={() => start.mutate('dividends')}><FontAwesomeIcon icon={faDownload} /> 補齊歷史股利</button>
         <button className="button-add" disabled={busy || !selected.length || !tasks.data || !settings.data}
-          onClick={() => start.mutate('price_events')}>補齊分割／減資</button>
+          onClick={() => start.mutate('price_events')}><FontAwesomeIcon icon={faDownload} /> 補齊分割／減資</button>
         <p className="muted">補齊歷史股利也會補價格事件；補齊分割／減資只更新價格事件與還原價，不下載行情或股利。完成後請重新回測。</p>
         <Progress task={tasks.data?.initialize} />
         <Errors
@@ -334,7 +348,7 @@ export function MarketScanPage() {
       <section className="card">
         <div className="market-section-heading">
           <h2>已發佈候選</h2>
-          <button onClick={refresh}>重新整理</button>
+          <button onClick={refresh}><FontAwesomeIcon icon={faArrowsRotate} /> 重新整理</button>
         </div>
         {busy && <p className="backtest-warning">任務執行中，以下仍為上一批已發佈結果。</p>}
         <p className="muted">全市場掃描只列入進場事件：今天符合且前一個有效交易日不符合。</p>
@@ -550,6 +564,7 @@ export function MarketScanPage() {
               setPage(1)
             }}
           >
+            <FontAwesomeIcon icon={faFilterCircleXmark} />
             清除篩選
           </button>
         </div>
@@ -627,18 +642,16 @@ export function MarketScanPage() {
           <p className="muted">目前篩選範圍沒有候選資料。</p>
         )}
         <div className="market-pagination">
-          <button disabled={page === 1} onClick={() => setPage((p) => p - 1)}>
-            上一頁
-          </button>
+          <IconButton disabled={page === 1} onClick={() => setPage((p) => p - 1)} icon={faChevronLeft} label="上一頁" />
           <span>
             第 {page} 頁 · 共 {candidates.data?.total ?? 0} 列 · 每頁 50 列
           </span>
-          <button
+          <IconButton
             disabled={page * 50 >= (candidates.data?.total ?? 0)}
             onClick={() => setPage((p) => p + 1)}
-          >
-            下一頁
-          </button>
+            icon={faChevronRight}
+            label="下一頁"
+         />
         </div>
         <SignalPerformance version={finishVersion} />
     </section>

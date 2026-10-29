@@ -1,3 +1,5 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faPlus } from '@fortawesome/free-solid-svg-icons'
 import { useState, type FormEvent } from 'react'
 import type { WatchlistInput } from '../types'
 
@@ -70,6 +72,8 @@ export function AddWatchlistForm({ onSubmit, pending, error }: AddWatchlistFormP
       </label>
 
       <button className="button-add" type="submit" disabled={pending}>
+
+        <FontAwesomeIcon icon={faPlus} />
         {pending ? '新增中…' : '加入觀察清單'}
       </button>
       {error && (

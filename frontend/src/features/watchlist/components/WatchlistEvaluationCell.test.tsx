@@ -42,7 +42,7 @@ function show(results: SavedEvaluation[]) {
 }
 it('shows Chinese badges, dated prices and stale market warnings', () => {
   const { container } = show([result])
-  expect(screen.getByText('戰法二：出場')).toBeTruthy()
+  expect(screen.getByTitle('戰法二：出場')).toBeTruthy()
   expect(container.textContent).not.toContain('EXIT')
   expect(screen.getByText('行情過期')).toBeTruthy()
   expect(screen.getByText('行情 10/28').className).toBe('stale-notice')
@@ -64,5 +64,5 @@ it('uses the latest result date and omits warnings for current market data', () 
 })
 it('allows a Chinese badge label override', () => {
   render(<RuleStateBadge ruleName="戰法二" state="STALE" label="行情過期" />)
-  expect(screen.getByTitle('行情過期').textContent).toBe('戰法二：行情過期')
+  expect(screen.getByTitle('戰法二：行情過期').textContent).toBe('戰法二行情過期')
 })

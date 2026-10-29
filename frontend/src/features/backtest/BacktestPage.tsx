@@ -1,3 +1,12 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import {
+  faChevronDown,
+  faChevronLeft,
+  faChevronRight,
+  faPlay,
+  faTriangleExclamation,
+} from '@fortawesome/free-solid-svg-icons'
+import { IconButton } from '../../components/IconButton'
 import { formatTaipeiTime } from '../../lib/time'
 import { Fragment, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -68,8 +77,8 @@ function TradeDetails({ stock, batch }: { stock: StockPerformance; batch: string
     <div className="backtest-detail">
       <h2>
         {stock.ticker} {stock.stockName} · {stock.ruleName}
-        {(stock.stale || data?.stale) && <span className="stale-mark" title="以下為上次成功結果，已過期。">⚠</span>}
-        {needsRerun && <span className="stale-mark" title={rerunReason}>⚠</span>}
+        {(stock.stale || data?.stale) && <span className="stale-mark" title="以下為上次成功結果，已過期。"><FontAwesomeIcon icon={faTriangleExclamation} /></span>}
+        {needsRerun && <span className="stale-mark" title={rerunReason}><FontAwesomeIcon icon={faTriangleExclamation} /></span>}
       </h2>
       <div className="muted backtest-detail-summary">
         <p>毛報酬：勝率 {percent(stock.grossMetrics.winRate)}、平均 {percent(stock.grossMetrics.averageReturn)}、複利 {percent(stock.grossMetrics.compoundReturn)}、最大回撤 {percent(stock.grossMetrics.maxDrawdown)}、獲利因子 {stock.grossMetrics.noLosses ? '無虧損' : stock.grossMetrics.profitFactor?.toFixed(2) ?? '無資料'}</p>
@@ -140,10 +149,10 @@ function TradeDetails({ stock, batch }: { stock: StockPerformance; batch: string
                       {price(t.exitPrice)}
                     </td>
                     <td>{t.holdingDays ?? '—'}</td>
-                    <td>{percent(t.netReturnRate)}{needsRerun && <span className="stale-mark" title={rerunReason}>⚠</span>}
+                    <td>{percent(t.netReturnRate)}{needsRerun && <span className="stale-mark" title={rerunReason}><FontAwesomeIcon icon={faTriangleExclamation} /></span>}
                       <small>毛 {percent(data.needsRerun ? t.returnRate : t.grossReturnRate)}</small></td>
                     <td>
-                      {percent(t.netUnrealizedReturn)}{needsRerun && <span className="stale-mark" title={rerunReason}>⚠</span>}
+                      {percent(t.netUnrealizedReturn)}{needsRerun && <span className="stale-mark" title={rerunReason}><FontAwesomeIcon icon={faTriangleExclamation} /></span>}
                       <small>毛 {percent(data.needsRerun ? t.unrealizedReturn : t.grossUnrealizedReturn)}</small>
                       {t.valuationDate && <small>估值日 {t.valuationDate}</small>}
                     </td>
@@ -166,16 +175,14 @@ function TradeDetails({ stock, batch }: { stock: StockPerformance; batch: string
             </div>
           </details>
           <div className="backtest-pager">
-            <button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 50))}>
-              上一頁
-            </button>
+            <IconButton disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 50))} icon={faChevronLeft} label="上一頁" />
             <span>第 {Math.floor(offset / 50) + 1} 頁 · 交易與訊號每頁各 50 筆</span>
-            <button
+            <IconButton
               disabled={offset + 50 >= Math.max(data.tradeTotal, data.signalTotal)}
               onClick={() => setOffset(offset + 50)}
-            >
-              下一頁
-            </button>
+              icon={faChevronRight}
+              label="下一頁"
+           />
           </div>
         </>
       )}
@@ -242,6 +249,7 @@ export function BacktestPage() {
             disabled={running || start.isPending || !staleRuleIds.length}
             onClick={() => start.mutate(staleRuleIds)}
           >
+            <FontAwesomeIcon icon={faPlay} />
             立即重新回測
           </button>
         </div>
@@ -271,6 +279,7 @@ export function BacktestPage() {
           disabled={!ids.length || running || start.isPending || report.isLoading || report.isError}
           onClick={() => start.mutate(ids)}
         >
+          <FontAwesomeIcon icon={faPlay} />
           {running || start.isPending ? '回測執行中…' : '執行回測'}
         </button>
         {start.isError && (
@@ -349,7 +358,7 @@ export function BacktestPage() {
                     <tr key={r.ruleId} className={r.metrics.tradeCount === 0 || r.metrics.insufficientSample ? 'backtest-row-thin' : undefined}>
                       <td>
                         {r.ruleName}
-                        {r.stale && <span className="stale-mark" title="結果已過期，請重新回測。">⚠</span>}
+                        {r.stale && <span className="stale-mark" title="結果已過期，請重新回測。"><FontAwesomeIcon icon={faTriangleExclamation} /></span>}
                         <small>{r.stockCount} 檔</small>
                         <small>{r.actualStart}～{r.actualEnd}</small>
                       </td>
@@ -438,12 +447,12 @@ export function BacktestPage() {
                             aria-controls={selected === s.id ? `backtest-detail-${s.id}` : undefined}
                             onClick={() => setSelected(selected === s.id ? null : s.id)}
                           >
-                            {selected === s.id ? '▾' : '▸'} {s.ticker} {s.stockName}
+                            <FontAwesomeIcon icon={selected === s.id ? faChevronDown : faChevronRight} /> {s.ticker} {s.stockName}
                           </button>
                           <small>{s.ruleName}</small>
-                          {s.needsRerun && <span className="stale-mark" title={s.rerunReason ?? '需重新回測：以下舊報酬只代表毛報酬。'}>⚠</span>}
+                          {s.needsRerun && <span className="stale-mark" title={s.rerunReason ?? '需重新回測：以下舊報酬只代表毛報酬。'}><FontAwesomeIcon icon={faTriangleExclamation} /></span>}
                           {s.stale && (
-                            <span className="stale-mark" title="過期：上次成功結果">⚠</span>
+                            <span className="stale-mark" title="過期：上次成功結果"><FontAwesomeIcon icon={faTriangleExclamation} /></span>
                           )}
                           <small>{s.actualStart}～{s.actualEnd}</small>
                         </td>

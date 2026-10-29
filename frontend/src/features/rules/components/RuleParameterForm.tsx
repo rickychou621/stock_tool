@@ -1,3 +1,5 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faFloppyDisk, faRotateLeft, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { useState, type FormEvent } from 'react'
 import type { ConditionCatalogItem, RuleUpdate, WatchRule } from '../types'
 import {
@@ -111,6 +113,7 @@ export function RuleParameterForm({ rule, catalog, onSave, onCancel }: Props) {
         )}
         <div className="rule-actions">
           <button className="button-primary" type="submit">
+            <FontAwesomeIcon icon={faFloppyDisk} />
             {saving ? '儲存中…' : '儲存'}
           </button>
           <button
@@ -119,9 +122,11 @@ export function RuleParameterForm({ rule, catalog, onSave, onCancel }: Props) {
               setValues(rule.conditions.map((c, i) => formValues(c, catalogs[i], true)))
             }
           >
+            <FontAwesomeIcon icon={faRotateLeft} />
             還原為原文預設
           </button>
           <button type="button" onClick={onCancel}>
+            <FontAwesomeIcon icon={faXmark} />
             取消
           </button>
         </div>

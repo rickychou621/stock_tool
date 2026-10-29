@@ -169,16 +169,31 @@ it('同一檔不同戰法的接近出場與出場各自計數並可篩選', asyn
 
 it('評估欄先顯示狀態徽章，重新評估按鈕放在操作欄最前面', async () => {
   setup()
-  await screen.findAllByRole('button', { name: '重新評估' })
+  await screen.findAllByRole('button', { name: /^重新評估 / })
   const row = screen.getByRole('link', { name: '1001 股票 1' }).closest('tr')!
   const cells = within(row).getAllByRole('cell')
   const evaluation = cells[1].firstElementChild!
-  const badge = within(cells[1]).getByText('戰法 1：出場')
+  const badge = within(cells[1]).getByTitle('戰法 1：出場')
   let first = evaluation.firstElementChild!
-  while (first.firstElementChild) first = first.firstElementChild
+  while (first !== badge && first.firstElementChild) first = first.firstElementChild
   expect(first).toBe(badge)
   expect(within(cells[1]).queryByRole('button')).toBeNull()
-  expect(within(cells[3]).getAllByRole('button').map((button) => button.textContent)).toEqual([
-    '重新評估', '編輯', '移除',
+  expect(within(cells[3]).getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual([
+    '重新評估 1001', '編輯 1001', '移除觀察股票 1001',
   ])
+})
+
+
+it.each([false, true])('移除股票須確認，確認結果為 %s', async (confirmed) => {
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(confirmed)
+  const remove = vi.spyOn(apiClient, 'delete').mockResolvedValue(undefined)
+  setup()
+  fireEvent.click(await screen.findByRole('button', { name: '移除觀察股票 1001' }))
+  expect(confirm).toHaveBeenCalledWith('確定要從觀察清單移除 1001 股票 1？')
+  if (confirmed) {
+    await waitFor(() => expect(remove).toHaveBeenCalledWith('/watchlist/1'))
+    expect(remove).toHaveBeenCalledTimes(1)
+  } else {
+    expect(remove).not.toHaveBeenCalled()
+  }
 })

@@ -1,3 +1,5 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faFloppyDisk, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { useState, type FormEvent } from 'react'
 import type { WatchlistItem, WatchlistEdit } from '../types'
 interface Props {
@@ -73,9 +75,11 @@ export function EditWatchlistForm({ item, onSave, onCancel }: Props) {
       <p className="muted">族群分類也會顯示在個股查詢頁。</p>
       <div className="evaluation-actions">
         <button className="button-primary" disabled={busy}>
+          <FontAwesomeIcon icon={faFloppyDisk} />
           {busy ? '儲存中…' : '儲存'}
         </button>
         <button type="button" disabled={busy} onClick={onCancel}>
+          <FontAwesomeIcon icon={faXmark} />
           取消
         </button>
       </div>

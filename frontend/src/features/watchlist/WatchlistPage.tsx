@@ -1,3 +1,6 @@
+import { getStockName } from '../../lib/stockDirectory'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faFilterCircleXmark, faRotate } from '@fortawesome/free-solid-svg-icons'
 import { mostUrgent, STATE_LABELS, STATE_URGENCY, type RuleStateCode } from '../rules/state'
 import { useRef, useState } from 'react'
 import { PageHeader } from '../../components/PageHeader'
@@ -226,6 +229,7 @@ export function WatchlistPage() {
           disabled={busy || !ruleIds.length || !items.length}
           onClick={() => void evaluate(items)}
         >
+          <FontAwesomeIcon icon={faRotate} spin={busy} />
           {busy ? '處理中…' : `評估全部 ${items.length} 檔 · ${ruleIds.length} 條戰法`}
         </button>
         {progress && (
@@ -287,6 +291,7 @@ export function WatchlistPage() {
               setSort('urgent')
             }}
           >
+            <FontAwesomeIcon icon={faFilterCircleXmark} />
             清除篩選
           </button>
         </div>
@@ -309,7 +314,12 @@ export function WatchlistPage() {
           busyItem={busyItem}
           errors={errors}
           onEvaluate={(item) => void evaluate([item])}
-          onRemove={(id) => remove.mutate(id)}
+          onRemove={(id) => {
+            const item = items.find((item) => item.id === id)
+            if (item && window.confirm(`確定要從觀察清單移除 ${item.ticker} ${item.stockName || getStockName(item.ticker)}？`)) {
+              remove.mutate(id)
+            }
+          }}
           onSave={save}
         />
       </div>

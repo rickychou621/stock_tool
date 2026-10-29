@@ -1,3 +1,5 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faFloppyDisk } from '@fortawesome/free-solid-svg-icons'
 import { formatTaipeiTime } from '../../../lib/time'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -132,6 +134,7 @@ export function WatchlistSchedule({ rules }: { rules: WatchRule[] | undefined })
               })
             }
           >
+            <FontAwesomeIcon icon={faFloppyDisk} />
             {save.isPending ? '儲存中…' : '儲存設定'}
           </button>
           {draft && <span className="muted"> 尚有未儲存設定</span>}

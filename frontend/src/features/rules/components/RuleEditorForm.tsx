@@ -1,3 +1,5 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faPlus } from '@fortawesome/free-solid-svg-icons'
 import { useState, type FormEvent } from 'react'
 import type { ConditionCatalogItem, LogicOperator, RuleCondition, WatchRule } from '../types'
 
@@ -119,6 +121,8 @@ export function RuleEditorForm({ conditionCatalog, onSubmit }: RuleEditorFormPro
       )}
 
       <button className="button-primary" type="submit">
+
+        <FontAwesomeIcon icon={faPlus} />
         新增規則
       </button>
     </form>

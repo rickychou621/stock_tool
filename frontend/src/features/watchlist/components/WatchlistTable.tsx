@@ -1,3 +1,5 @@
+import { faPenToSquare, faRotate, faTrashCan } from '@fortawesome/free-solid-svg-icons'
+import { IconButton } from '../../../components/IconButton'
 import { mostUrgent } from '../../rules/state'
 import { Fragment, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -82,28 +84,28 @@ export function WatchlistTable({
                   </td>
                   <td>
                     <div className="evaluation-actions">
-                      <button
+                      <IconButton
                         type="button"
-                        className="button-secondary"
+                        variant="secondary"
+                        icon={faRotate}
+                        label={`${results.length ? '重新評估' : '評估'} ${item.ticker}`}
+                        spinning={busyItem === item.id}
                         disabled={disabled || !ruleIds.length}
                         onClick={() => onEvaluate(item)}
-                      >
-                        {results.length ? '重新評估' : '評估'}
-                      </button>
-                      <button
+                      />
+                      <IconButton
+                        icon={faPenToSquare}
+                        label={`編輯 ${item.ticker}`}
                         disabled={disabled}
                         onClick={() => setEditing(editing === item.id ? null : item.id)}
-                      >
-                        編輯
-                      </button>
-                      <button
-                        className="button-danger"
+                      />
+                      <IconButton
+                        variant="danger"
+                        icon={faTrashCan}
                         disabled={disabled}
                         onClick={() => onRemove(item.id)}
-                        aria-label={`移除觀察股票 ${item.ticker}`}
-                      >
-                        移除
-                      </button>
+                        label={`移除觀察股票 ${item.ticker}`}
+                      />
                     </div>
                   </td>
                 </tr>

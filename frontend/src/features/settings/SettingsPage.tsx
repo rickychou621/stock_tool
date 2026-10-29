@@ -1,3 +1,5 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faFloppyDisk, faPaperPlane } from '@fortawesome/free-solid-svg-icons'
 import { useState } from 'react'
 import { ETF_CATEGORY_LABELS } from './etfCategories'
 import { Link } from 'react-router-dom'
@@ -99,6 +101,7 @@ export function SettingsPage() {
           disabled={!data || saveExclusion.isPending}
           onClick={() => saveExclusion.mutate()}
         >
+          <FontAwesomeIcon icon={faFloppyDisk} />
           {saveExclusion.isPending ? '儲存中...' : '儲存'}
         </button>
         {saveExclusion.isSuccess && (
@@ -122,6 +125,7 @@ export function SettingsPage() {
           onClick={() => testTelegram.mutate()}
           disabled={testTelegram.isPending}
         >
+          <FontAwesomeIcon icon={faPaperPlane} />
           {testTelegram.isPending ? '發送中...' : '發送測試訊息'}
         </button>
 

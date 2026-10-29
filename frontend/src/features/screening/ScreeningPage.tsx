@@ -1,3 +1,11 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import {
+  faBell,
+  faBellSlash,
+  faCheck,
+  faMagnifyingGlassChart,
+  faPaperPlane,
+} from '@fortawesome/free-solid-svg-icons'
 import { formatTaipeiTime } from '../../lib/time'
 import { ETF_CATEGORY_LABELS } from '../settings/etfCategories'
 import { RuleStateBadge } from '../rules/components/RuleStateBadge'
@@ -130,6 +138,7 @@ export function ScreeningPage() {
           onClick={() => scanMutation.mutate()}
           disabled={scanning || notifyMutation.isPending}
         >
+          <FontAwesomeIcon icon={faMagnifyingGlassChart} />
           {scanning
             ? `掃描中…${scanJob.data?.total ? ` ${scanJob.data.done}/${scanJob.data.total}` : ''}`
             : '立即掃描'}
@@ -147,6 +156,7 @@ export function ScreeningPage() {
             notifyMutation.mutate(pendingIds)
           }}
         >
+          <FontAwesomeIcon icon={faPaperPlane} />
           {notifyMutation.isPending ? '發送中…' : `通知 Telegram（${pendingStocks} 檔）`}
         </button>
         <p className="muted">
@@ -278,7 +288,7 @@ export function ScreeningPage() {
                         <span
                           className={`status-badge ${item.id !== null && item.isNotified ? 'status-matched' : ''}`}
                         >
-                          {item.id === null ? '不通知' : item.isNotified ? '已通知' : '尚未通知'}
+                          <FontAwesomeIcon icon={item.id === null ? faBellSlash : item.isNotified ? faCheck : faBell} /> {item.id === null ? '不通知' : item.isNotified ? '已通知' : '尚未通知'}
                         </span>
                       </td>
                       <td>

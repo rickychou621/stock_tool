@@ -1,3 +1,10 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import {
+  faArrowsRotate,
+  faChevronLeft,
+  faChevronRight,
+} from '@fortawesome/free-solid-svg-icons'
+import { IconButton } from '../../components/IconButton'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { apiClient } from '../../api/client'
@@ -56,7 +63,7 @@ export function SignalPerformance({ version }: { version: string }) {
   return <section className="card">
     <div className="market-section-heading">
       <h2>戰法績效追蹤</h2>
-      <button onClick={() => { void summary.refetch(); if (selected !== null) void details.refetch() }}>重新整理績效</button>
+      <button onClick={() => { void summary.refetch(); if (selected !== null) void details.refetch() }}><FontAwesomeIcon icon={faArrowsRotate} /> 重新整理績效</button>
     </div>
     <p className="muted">全市場掃描只列入進場事件：今天符合且前一個有效交易日不符合。</p>
     <p className="muted">記錄自 {summary.data?.deployedOn ?? '階段四 B 部署日'} 起實際掃描的正常命中訊號，不回填部署前的訊號。
@@ -111,9 +118,9 @@ export function SignalPerformance({ version }: { version: string }) {
         </tr>))}</tbody>
       </table></div>
       {details.data?.total === 0 && <p>沒有符合條件的訊號。</p>}
-      <div className="backtest-pager"><button disabled={page === 1} onClick={() => setPage(p => p - 1)}>上一頁</button>
+      <div className="backtest-pager"><IconButton disabled={page === 1} onClick={() => setPage(p => p - 1)} icon={faChevronLeft} label="上一頁" />
         <span>第 {page} 頁 · 共 {details.data?.total ?? 0} 筆訊號，每頁 50 筆</span>
-        <button disabled={!details.data || page * 50 >= details.data.total} onClick={() => setPage(p => p + 1)}>下一頁</button></div>
+        <IconButton disabled={!details.data || page * 50 >= details.data.total} onClick={() => setPage(p => p + 1)} icon={faChevronRight} label="下一頁" /></div>
     </div>}
   </section>
 }

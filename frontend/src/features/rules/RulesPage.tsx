@@ -86,7 +86,12 @@ export function RulesPage() {
             conditionCatalog={conditionsQuery.data}
             onToggleEnabled={(rule) => toggleMutation.mutate(rule)}
             onSave={(id, payload) => updateMutation.mutateAsync({ id, payload })}
-            onDelete={(ruleId) => deleteMutation.mutate(ruleId)}
+            onDelete={(ruleId) => {
+                const rule = rulesQuery.data?.find((rule) => rule.id === ruleId)
+                if (rule && window.confirm(`確定要刪除規則「${rule.name}」？`)) {
+                  deleteMutation.mutate(ruleId)
+                }
+              }}
           />
         )}
       </div>

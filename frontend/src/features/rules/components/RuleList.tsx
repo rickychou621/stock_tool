@@ -1,3 +1,5 @@
+import { faPenToSquare, faTrashCan } from '@fortawesome/free-solid-svg-icons'
+import { IconButton } from '../../../components/IconButton'
 import { Fragment, useState } from 'react'
 import { RuleParameterForm } from './RuleParameterForm'
 import { differingParams, displayValue, PARAM_LABELS as FIELD_LABELS } from '../parameters'
@@ -122,16 +124,22 @@ export function RuleList({
                   />
                 </td>
                 <td>
-                  <button
-                    type="button"
-                    aria-expanded={editingId === rule.id}
-                    onClick={() => setEditingId(rule.id)}
-                  >
-                    編輯
-                  </button>
-                  <button className="button-danger" type="button" onClick={() => onDelete(rule.id)}>
-                    刪除
-                  </button>
+                  <div className="evaluation-actions">
+                    <IconButton
+                      type="button"
+                      icon={faPenToSquare}
+                      label={`編輯 ${rule.name}`}
+                      aria-expanded={editingId === rule.id}
+                      onClick={() => setEditingId(rule.id)}
+                    />
+                    <IconButton
+                      variant="danger"
+                      icon={faTrashCan}
+                      label={`刪除 ${rule.name}`}
+                      type="button"
+                      onClick={() => onDelete(rule.id)}
+                    />
+                  </div>
                 </td>
               </tr>
               {editingId === rule.id && (

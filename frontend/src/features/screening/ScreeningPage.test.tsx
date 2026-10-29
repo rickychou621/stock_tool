@@ -105,7 +105,7 @@ it('行情過期可篩選且不通知，排除文字依實際類別顯示', asyn
     .toBe(true)
   expect(screen.getByText(/已排除 3 檔債券／期貨ETF/)).toBeTruthy()
   fireEvent.click(filter)
-  expect(screen.getByText('戰法：行情過期')).toBeTruthy()
+  expect(screen.getByTitle('戰法：行情過期')).toBeTruthy()
   expect(screen.getByText('行情過期原因')).toBeTruthy()
   client.clear()
 })

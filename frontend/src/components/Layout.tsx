@@ -1,14 +1,25 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import {
+  faBolt,
+  faChartLine,
+  faEye,
+  faFlask,
+  faGear,
+  faGlobe,
+  faInbox,
+  faSliders,
+} from '@fortawesome/free-solid-svg-icons'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 
 const NAV_ITEMS = [
-  { to: '/', label: '觀察清單' },
-  { to: '/market-scan', label: '全市場掃描' },
-  { to: '/matches', label: '今日符合戰法清單' },
-  { to: '/candidates', label: '候選池' },
-  { to: '/chart', label: '個股查詢' },
-  { to: '/backtest', label: '戰法回測' },
-  { to: '/rules', label: '規則管理' },
-  { to: '/settings', label: '系統設定' },
+  { to: '/', label: '觀察清單', icon: faEye },
+  { to: '/market-scan', label: '全市場掃描', icon: faGlobe },
+  { to: '/matches', label: '今日符合戰法清單', icon: faBolt },
+  { to: '/candidates', label: '候選池', icon: faInbox },
+  { to: '/chart', label: '個股查詢', icon: faChartLine },
+  { to: '/backtest', label: '戰法回測', icon: faFlask },
+  { to: '/rules', label: '規則管理', icon: faSliders },
+  { to: '/settings', label: '系統設定', icon: faGear },
 ]
 
 export function Layout() {
@@ -38,7 +49,7 @@ export function Layout() {
                   : 'app-nav__link'
               }
             >
-              <span className="nav-dot" aria-hidden="true" />
+              <FontAwesomeIcon icon={item.icon} className="nav-icon" />
               {item.label}
             </NavLink>
           ))}

@@ -1,4 +1,25 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import {
+  faClock,
+  faMinus,
+  faPersonShelter,
+  faPersonWalkingArrowRight,
+  faPersonWalkingDashedLineArrowRight,
+  faQuestion,
+  faRightToBracket,
+} from '@fortawesome/free-solid-svg-icons'
+import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
 import { STATE_LABELS, type RuleStateCode, type RuleStateDetail } from '../state'
+
+const STATE_ICONS: Record<RuleStateCode, IconDefinition> = {
+  ENTRY: faRightToBracket,
+  HOLD: faPersonShelter,
+  NEAR_EXIT: faPersonWalkingDashedLineArrowRight,
+  EXIT: faPersonWalkingArrowRight,
+  NONE: faMinus,
+  NO_DATA: faQuestion,
+  STALE: faClock,
+}
 
 export function RuleStateBadge({
   ruleName,
@@ -9,12 +30,17 @@ export function RuleStateBadge({
   state: RuleStateCode
   label?: string
 }) {
+  const text = label ?? STATE_LABELS[state]
   return (
     <span
       className={`state-badge state-badge--${state.toLowerCase()}`}
-      title={label ?? STATE_LABELS[state]}
+      title={`${ruleName}：${text}`}
     >
-      {ruleName}：{label ?? STATE_LABELS[state]}
+      <span>{ruleName}</span>
+      <span className="state-badge__state">
+        <FontAwesomeIcon icon={label === '行情過期' ? faClock : STATE_ICONS[state]} />
+        {text}
+      </span>
     </span>
   )
 }

@@ -1,3 +1,5 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faArrowsRotate } from '@fortawesome/free-solid-svg-icons'
 import { daysSinceTaipei, formatTaipeiTime, parseUtcTime } from '../../lib/time'
 import { PageHeader } from '../../components/PageHeader'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -50,6 +52,7 @@ export function CandidatePoolPage() {
           onClick={() => refreshMutation.mutate()}
           disabled={refreshMutation.isPending}
         >
+          <FontAwesomeIcon icon={faArrowsRotate} />
           {refreshMutation.isPending ? '掃描中...' : '更新候選池'}
         </button>
         {refreshMutation.data && (
