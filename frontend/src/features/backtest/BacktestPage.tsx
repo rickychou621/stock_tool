@@ -24,13 +24,16 @@ const states: Record<string, string> = {
   not_met: '未符合',
 }
 const statusLabels = { closed: '已完成', open: '持有中', unfilled: '未成交' }
-const metricHeaders = ['交易次數', '淨勝率', '平均淨報酬', '淨複利報酬', '淨最大回撤', '淨獲利因子', '同期 0050 買進持有']
+const metricHeaders = ['交易次數', '淨勝率', '平均淨報酬', '淨複利報酬', '淨最大回撤', '淨獲利因子', '超額報酬（vs 0050）']
 function CostInfo({ costs }: { costs: CostSnapshot | null }) {
   if (!costs) return <p className="backtest-warning">舊結果未記錄成本，需重新回測。</p>
   return <p className="muted">本次成本：買賣手續費各 {(costs.feeRate * 100).toFixed(4)}% × {costs.feeDiscount}；
     賣出證交稅：普通股 {percent(costs.taxRateStock)}、ETF {percent(costs.taxRateEtf)}。</p>
 }
-function MetricCells({ metrics: m, benchmarkBuyHoldReturn }: { metrics: Metrics; benchmarkBuyHoldReturn: number | null }) {
+function MetricCells({ metrics: m, benchmarkBuyHoldReturn, overall = false }: { metrics: Metrics; benchmarkBuyHoldReturn: number | null; overall?: boolean }) {
+  if (m.tradeCount === 0) return <td className="muted" colSpan={metricHeaders.length}>期間內無訊號</td>
+  const excess = m.compoundReturn === null || benchmarkBuyHoldReturn === null
+    ? null : m.compoundReturn - benchmarkBuyHoldReturn
   return (
     <>
       <td>
@@ -40,9 +43,11 @@ function MetricCells({ metrics: m, benchmarkBuyHoldReturn }: { metrics: Metrics;
       <td>{percent(m.winRate)}</td>
       <td>{percent(m.averageReturn)}</td>
       <td>{percent(m.compoundReturn)}</td>
-      <td>{percent(m.maxDrawdown)}</td>
+      <td>{overall
+        ? <>中位數 {percent(m.maxDrawdownMedian)}／最大 {percent(m.maxDrawdownMax)}{m.maxDrawdownMaxTicker && `（${m.maxDrawdownMaxTicker}${m.maxDrawdownMaxName ? ` ${m.maxDrawdownMaxName}` : ''}）`}</>
+        : percent(m.maxDrawdown)}</td>
       <td>{!m.tradeCount ? '無資料' : m.noLosses ? '無虧損' : m.profitFactor?.toFixed(2) ?? '無資料'}</td>
-      <td>{percent(benchmarkBuyHoldReturn)}</td>
+      <td>{excess === null ? '—' : `${excess > 0 ? '+' : ''}${percent(excess)}`}</td>
     </>
   )
 }
@@ -219,6 +224,7 @@ export function BacktestPage() {
     )
     .sort(
       (a, b) =>
+        Number(a.metrics.tradeCount === 0) - Number(b.metrics.tradeCount === 0) ||
         Number(a.metrics.insufficientSample) - Number(b.metrics.insufficientSample) ||
         (b.metrics[sort] ?? -Infinity) - (a.metrics[sort] ?? -Infinity) ||
         a.ticker.localeCompare(b.ticker),
@@ -320,7 +326,10 @@ export function BacktestPage() {
             <h2>戰法整體績效</h2>
             {[...new Map(stocks.map((s) => [s.ruleId, s.ruleName])).entries()].map(([ruleId, ruleName]) => {
               const summary = summarizeRule(stocks, ruleId)
-              return <p key={ruleId}>{ruleName}：{summary.stockCount} 檔中 {summary.beatBenchmarkCount} 檔贏過同期 0050，中位數淨勝率 {summary.medianWinRate === null ? '無資料' : `${Math.round(summary.medianWinRate * 100)}%`}</p>
+              const benchmark = report.data?.overall.find((row) => row.ruleId === ruleId)?.benchmarkBuyHoldReturn
+              return <p key={ruleId}>{ruleName}：{summary.stockCount} 檔中 {summary.signalStockCount} 檔有訊號，共 {summary.tradeCount} 筆交易；{summary.beatBenchmarkCount} 檔贏過同期 0050{benchmark != null && `（${percent(benchmark)}）`}。{summary.sampleSufficient
+                ? `中位數淨勝率 ${percent(summary.medianWinRate)}。`
+                : '樣本不足，勝率僅供參考。'}</p>
             })}
             <p className="muted">
               統計下方個股結果，舊格式未含淨報酬者除外；期間顯示最早至最晚日期，各股涵蓋長度可能不同。
@@ -331,20 +340,20 @@ export function BacktestPage() {
                   <tr>
                     <th>戰法／股票數</th>
                     {metricHeaders.map((h) => (
-                      <th key={h}>{h === '淨複利報酬' ? '個股淨複利中位數' : h}</th>
+                      <th key={h} title={h === '超額報酬（vs 0050）' ? '淨複利報酬 − 同期 0050 買進持有' : undefined}>{h === '淨複利報酬' ? '個股淨複利中位數' : h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {report.data?.overall.map((r) => (
-                    <tr key={r.ruleId} className={r.metrics.insufficientSample ? 'backtest-row-thin' : undefined}>
+                    <tr key={r.ruleId} className={r.metrics.tradeCount === 0 || r.metrics.insufficientSample ? 'backtest-row-thin' : undefined}>
                       <td>
                         {r.ruleName}
                         {r.stale && <span className="stale-mark" title="結果已過期，請重新回測。">⚠</span>}
                         <small>{r.stockCount} 檔</small>
                         <small>{r.actualStart}～{r.actualEnd}</small>
                       </td>
-                      <MetricCells metrics={r.metrics} benchmarkBuyHoldReturn={r.benchmarkBuyHoldReturn} />
+                      <MetricCells overall metrics={r.metrics} benchmarkBuyHoldReturn={r.benchmarkBuyHoldReturn} />
                     </tr>
                   ))}
                 </tbody>
@@ -414,14 +423,14 @@ export function BacktestPage() {
                   <tr>
                     <th>股票／戰法</th>
                     {metricHeaders.map((h) => (
-                      <th key={h}>{h}</th>
+                      <th key={h} title={h === '超額報酬（vs 0050）' ? '淨複利報酬 − 同期 0050 買進持有' : undefined}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {visible.map((s) => (
                     <Fragment key={s.id}>
-                      <tr className={s.metrics.insufficientSample ? 'backtest-row-thin' : undefined}>
+                      <tr className={s.metrics.tradeCount === 0 || s.metrics.insufficientSample ? 'backtest-row-thin' : undefined}>
                         <td>
                           <button
                             className="row-link backtest-stock-toggle"

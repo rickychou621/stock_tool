@@ -368,6 +368,18 @@ def median_or_none(values):
     return statistics.median(values) if values else None
 
 
+def drawdown_summary(values):
+    largest = max(values, key=lambda item: item[0]) if values else (None, None, None)
+    median = median_or_none([item[0] for item in values])
+    return dict(
+        maxDrawdown=median,
+        maxDrawdownMedian=median,
+        maxDrawdownMax=largest[0],
+        maxDrawdownMaxTicker=largest[1],
+        maxDrawdownMaxName=largest[2],
+    )
+
+
 def read_report(db):
     task = db.get(BacktestTask, 1)
     if task is None:
@@ -452,6 +464,8 @@ def read_report(db):
                     trades=[],
                     compounds=[],
                     grossCompounds=[],
+                    drawdowns=[],
+                    grossDrawdowns=[],
                 ),
             )
             group["stale"] |= stale or definition_changed
@@ -464,25 +478,35 @@ def read_report(db):
             gross_compound = p.get("grossMetrics", p["metrics"]).get("compoundReturn")
             if gross_compound is not None:
                 group["grossCompounds"].append(gross_compound)
+            for metric_key, group_key in (
+                ("metrics", "drawdowns"), ("grossMetrics", "grossDrawdowns")
+            ):
+                drawdown = p.get(metric_key, p["metrics"]).get("maxDrawdown")
+                if drawdown is not None:
+                    group[group_key].append((drawdown, row.ticker, row.stock_name))
     overall = []
     for group in grouped.values():
         overall.append(
             {
                 **{
                     k: v for k, v in group.items()
-                    if k not in ("trades", "compounds", "grossCompounds")
+                    if k not in (
+                        "trades", "compounds", "grossCompounds", "drawdowns", "grossDrawdowns"
+                    )
                 },
                 # Chaining every stock's trades into one compound is meaningless across
                 # stocks; report the median of per-stock compound returns instead.
                 "metrics": {
                     **metrics(group["trades"]),
                     "compoundReturn": median_or_none(group["compounds"]),
+                    **drawdown_summary(group["drawdowns"]),
                 },
                 "grossMetrics": {
                     **metrics(
                         [{**t, "returnRate": t["grossReturnRate"]} for t in group["trades"]]
                     ),
                     "compoundReturn": median_or_none(group["grossCompounds"]),
+                    **drawdown_summary(group["grossDrawdowns"]),
                 },
                 "averageExcessReturn": average_excess(group["trades"]),
                 "benchmarkBuyHoldReturn": benchmark_return(

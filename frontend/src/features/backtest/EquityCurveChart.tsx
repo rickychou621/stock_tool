@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { createChart, LineSeries, PriceScaleMode, type Time } from 'lightweight-charts'
+import { createChart, LineSeries, LineType, PriceScaleMode, type Time } from 'lightweight-charts'
 import type { EquityCurve } from './types'
 
 export function EquityCurveChart({ curve }: { curve: EquityCurve }) {
@@ -20,9 +20,12 @@ export function EquityCurveChart({ curve }: { curve: EquityCurve }) {
       timeScale: { minBarSpacing: 0.1 },
       rightPriceScale: { mode: PriceScaleMode.Logarithmic },
     })
-    for (const [points, color] of [[curve.strategy, theme.accent], [curve.benchmark, '#888888']] as const) {
+    for (const [points, color, lineType] of [[curve.strategy, theme.accent, LineType.WithSteps], [curve.benchmark, '#888888', LineType.Simple]] as const) {
       const series = chart.addSeries(LineSeries, {
         color,
+        lineType,
+        lastValueVisible: false,
+        priceLineVisible: false,
         priceFormat: { type: 'custom', formatter: (value: number) => `${((value - 1) * 100).toFixed(2)}%` },
       })
       series.setData(points.map((point) => ({ time: point.date as Time, value: point.value })))
@@ -39,9 +42,14 @@ export function EquityCurveChart({ curve }: { curve: EquityCurve }) {
     }
   }, [curve])
 
+  const lastReturn = (points: EquityCurve['strategy']) => {
+    if (!points.length) return '—'
+    const value = (points[points.length - 1].value - 1) * 100
+    return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`
+  }
   if (!curve.strategy.length) return <p className="muted">沒有足夠資料畫資金曲線</p>
   return <>
     <div ref={container} style={{ height: 260 }} />
-    <p className="backtest-chart-legend"><span>— 戰法</span><span>— 同期 0050</span></p>
+    <p className="backtest-chart-legend"><span>— 戰法 {lastReturn(curve.strategy)}</span><span>— 同期 0050 {lastReturn(curve.benchmark)}</span></p>
   </>
 }

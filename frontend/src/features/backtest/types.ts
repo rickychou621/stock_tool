@@ -9,6 +9,10 @@ export interface Metrics {
   winRate: number | null
   averageReturn: number | null
   compoundReturn: number | null
+  maxDrawdownMedian?: number | null
+  maxDrawdownMax?: number | null
+  maxDrawdownMaxTicker?: string | null
+  maxDrawdownMaxName?: string | null
   maxDrawdown: number | null
   profitFactor: number | null
   noLosses: boolean

@@ -595,3 +595,39 @@ def test_detail_equity_curve_and_markers_ignore_pagination(factory, benchmark_ki
             assert len(detail["tradeMarkers"]) == 9
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.parametrize("net_values", [(0.1, 0.2), (None, 0.2), (None, None)])
+def test_overall_drawdown_uses_stock_median_and_max(factory, net_values):
+    manager = make_manager(factory)
+    manager.start([1], now=NOW)
+    manager.close()
+    with factory() as db:
+        rows = list(db.scalars(select(BacktestResult).order_by(BacktestResult.ticker)))
+        for row, net, gross in zip(rows, net_values, (0.3, 0.1), strict=True):
+            summary = copy.deepcopy(row.summary)
+            summary["metrics"]["maxDrawdown"] = net
+            summary["grossMetrics"]["maxDrawdown"] = gross
+            row.summary = summary
+        db.commit()
+        group, = read_report(db)["overall"]
+        net = group["metrics"]
+        if net_values == (None, None):
+            assert all(net[key] is None for key in (
+                "maxDrawdown", "maxDrawdownMedian", "maxDrawdownMax",
+                "maxDrawdownMaxTicker", "maxDrawdownMaxName",
+            ))
+        else:
+            expected = 0.15 if net_values[0] is not None else 0.2
+            assert net["maxDrawdownMedian"] == pytest.approx(expected)
+            assert net["maxDrawdown"] == net["maxDrawdownMedian"]
+            assert net["maxDrawdownMax"] == 0.2
+            assert net["maxDrawdownMaxTicker"] == rows[1].ticker
+            assert net["maxDrawdownMaxName"] == rows[1].stock_name
+            assert net["maxDrawdown"] <= net["maxDrawdownMax"]
+        gross = group["grossMetrics"]
+        assert gross["maxDrawdown"] == gross["maxDrawdownMedian"] == pytest.approx(0.2)
+        assert gross["maxDrawdownMax"] == 0.3
+        assert gross["maxDrawdownMaxTicker"] == rows[0].ticker
+        assert gross["maxDrawdownMaxName"] == rows[0].stock_name
+        assert "drawdowns" not in group and "grossDrawdowns" not in group
