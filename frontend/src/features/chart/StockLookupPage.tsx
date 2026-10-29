@@ -1,3 +1,4 @@
+import type { WatchlistItem } from '../watchlist/types'
 import type { RuleEvaluationResult, WatchRule } from '../rules/types'
 import { RuleStateBadge, RuleStateLine } from '../rules/components/RuleStateBadge'
 import { PageHeader } from '../../components/PageHeader'
@@ -40,7 +41,7 @@ export function StockLookupPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [emaVisibility, setEmaVisibility] = useState<EmaVisibility>({
     ema10: true,
-    ema20: true,
+    ma20: true,
     ema60: true,
   })
   const [bollingerVisible, setBollingerVisible] = useState(true)
@@ -49,6 +50,12 @@ export function StockLookupPage() {
   const stocksQuery = useQuery({
     queryKey: ['stocks', { limit: 20 }],
     queryFn: () => apiClient.get<StockInfo[]>('/stocks?limit=20'),
+  })
+
+  const watchlistQuery = useQuery({
+    queryKey: ['watchlist'],
+    queryFn: () => apiClient.get<WatchlistItem[]>('/watchlist?limit=500'),
+    enabled: !selectedTicker,
   })
 
   useEffect(() => {
@@ -65,12 +72,11 @@ export function StockLookupPage() {
   const searchReady = !searchInput?.trim() || searchInput.trim() === debouncedSearch
   const options = searchReady ? (lookupQuery.data ?? []) : []
 
-  // 股票清單載入後，如果目前還沒選定股票(例如直接進這頁、URL沒帶ticker)，預設選第一檔。
   useEffect(() => {
-    if (!selectedTicker && stocksQuery.data && stocksQuery.data.length > 0) {
-      setSelectedTicker(stocksQuery.data[0].ticker)
-    }
-  }, [selectedTicker, stocksQuery.data])
+    if (selectedTicker || (!watchlistQuery.data && !watchlistQuery.isError)) return
+    const ticker = watchlistQuery.data?.[0]?.ticker ?? stocksQuery.data?.[0]?.ticker
+    if (ticker) setSelectedTicker(ticker)
+  }, [selectedTicker, watchlistQuery.data, watchlistQuery.isError, stocksQuery.data])
 
   useEffect(() => {
     if (!selectedTicker) return
@@ -132,7 +138,7 @@ export function StockLookupPage() {
 
   const priceLines = ruleStates.flatMap((query, index) => {
     const price = query.data?.state?.triggerPrice
-    return price == null ? [] : [{ price, title: `${enabledRules[index].name} 觸價`, color: EXIT_COLOR }]
+    return price == null ? [] : [{ price, title: '', ruleName: enabledRules[index].name, color: EXIT_COLOR }]
   })
   const markers = useMemo(() => (triggerHistoryQuery.data ?? []).flatMap((item) => {
     if (!item.state) return []

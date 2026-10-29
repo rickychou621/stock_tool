@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, expect, it } from 'vitest'
 import { WatchlistEvaluationCell } from './WatchlistEvaluationCell'
 import { RuleStateBadge } from '../../rules/components/RuleStateBadge'
 import type { SavedEvaluation } from '../types'
@@ -36,10 +36,7 @@ function show(results: SavedEvaluation[]) {
   return render(
     <WatchlistEvaluationCell
       results={results}
-      expected={1}
-      disabled={false}
       busy={false}
-      onEvaluate={vi.fn()}
     />,
   )
 }

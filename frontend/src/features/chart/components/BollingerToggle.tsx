@@ -9,7 +9,7 @@ export function BollingerToggle({ visible, onChange }: BollingerToggleProps) {
       <label className="checkbox-row">
         <input type="checkbox" checked={visible} onChange={() => onChange(!visible)} />
         <span className="ema-toggle__swatch" style={{ background: '#e87ba4' }} />
-        <span>布林通道</span>
+        <span>布林通道（上下軌）</span>
       </label>
     </div>
   )

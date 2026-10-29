@@ -166,3 +166,19 @@ it('同一檔不同戰法的接近出場與出場各自計數並可篩選', asyn
   fireEvent.click(nearExit)
   expect(within(screen.getByRole('table')).getByRole('link', { name: '3711 日月光投控' })).toBeTruthy()
 })
+
+it('評估欄先顯示狀態徽章，重新評估按鈕放在操作欄最前面', async () => {
+  setup()
+  await screen.findAllByRole('button', { name: '重新評估' })
+  const row = screen.getByRole('link', { name: '1001 股票 1' }).closest('tr')!
+  const cells = within(row).getAllByRole('cell')
+  const evaluation = cells[1].firstElementChild!
+  const badge = within(cells[1]).getByText('戰法 1：出場')
+  let first = evaluation.firstElementChild!
+  while (first.firstElementChild) first = first.firstElementChild
+  expect(first).toBe(badge)
+  expect(within(cells[1]).queryByRole('button')).toBeNull()
+  expect(within(cells[3]).getAllByRole('button').map((button) => button.textContent)).toEqual([
+    '重新評估', '編輯', '移除',
+  ])
+})

@@ -25,7 +25,7 @@ const bars = ['2026-10-22', '2026-10-23'].map((date) => ({
   date, open: 100, high: 102, low: 99, close: 101, volume: 1000,
 }))
 const props = {
-  bars, emaVisibility: { ema10: true, ema20: true, ema60: true },
+  bars, emaVisibility: { ema10: true, ma20: true, ema60: true },
   bollingerVisible: true, subPanelIndicator: 'kd' as const,
 }
 function browserMocks() {
@@ -34,7 +34,11 @@ function browserMocks() {
 }
 it('更新觸價與歷史標記不重建圖表，排除範圍外、其他狀態及同日重複標記', () => {
   browserMocks()
-  const view = render(<StockChart {...props} priceLines={[{ price: 98, title: '觸價', color: '#991b1b' }]} />)
+  const view = render(<StockChart {...props} priceLines={[{ price: 98, title: '', ruleName: '戰法二', color: '#991b1b' }]} />)
+  expect(mock.candles.createPriceLine).toHaveBeenCalledWith(expect.objectContaining({
+    title: '', axisLabelVisible: true, price: 98,
+  }))
+  expect(screen.getByLabelText('觸價線圖例').textContent).toContain('— 戰法二 觸價 98.00')
   const oldLine = mock.candles.createPriceLine.mock.results[0].value
   view.rerender(<StockChart {...props} priceLines={[]} markers={[
     { date: '2026-10-23', state: 'EXIT', ruleName: '二' },
@@ -63,4 +67,19 @@ it('OHLC 與副圖顯示游標日期，離開後恢復最新日期', () => {
   expect(screen.getAllByText('2026/10/22')).toHaveLength(2)
   act(() => move({ time: undefined, seriesData: new Map() }))
   expect(screen.getAllByText('2026/10/23（最新）')).toHaveLength(2)
+})
+
+it('月線使用 20SMA 並移除重複的布林中軌', () => {
+  browserMocks()
+  const history = Array.from({ length: 21 }, (_, index) => ({
+    ...bars[0], date: `2026-10-${String(index + 1).padStart(2, '0')}`, close: index + 1,
+  }))
+  render(<StockChart {...props} bars={history} />)
+  const calls = mock.chart.addSeries.mock.calls as unknown as [string, { color: string }][]
+  const monthly = calls.findIndex(([, options]) => options.color === '#eb6834')
+  expect(mock.chart.addSeries.mock.results[monthly].value.setData).toHaveBeenCalledWith([
+    { time: '2026-10-20', value: 10.5 }, { time: '2026-10-21', value: 11.5 },
+  ])
+  expect(calls.some(([, options]) => options.color === '#1baf7a')).toBe(false)
+  expect(calls.filter(([, options]) => options.color === '#e87ba4')).toHaveLength(2)
 })

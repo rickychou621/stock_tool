@@ -65,11 +65,8 @@ export function WatchlistTable({
                   <td>
                     <WatchlistEvaluationCell
                       results={results}
-                      expected={ruleIds.length}
-                      disabled={disabled}
                       busy={busyItem === item.id}
                       error={errors[item.id]}
-                      onEvaluate={() => onEvaluate(item)}
                     />
                   </td>
                   <td>
@@ -85,6 +82,14 @@ export function WatchlistTable({
                   </td>
                   <td>
                     <div className="evaluation-actions">
+                      <button
+                        type="button"
+                        className="button-secondary"
+                        disabled={disabled || !ruleIds.length}
+                        onClick={() => onEvaluate(item)}
+                      >
+                        {results.length ? '重新評估' : '評估'}
+                      </button>
                       <button
                         disabled={disabled}
                         onClick={() => setEditing(editing === item.id ? null : item.id)}

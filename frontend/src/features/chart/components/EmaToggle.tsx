@@ -2,13 +2,13 @@ import type { EmaVisibility } from './StockChart'
 
 const EMA_LABELS: Record<keyof EmaVisibility, string> = {
   ema10: '10EMA',
-  ema20: '20EMA',
+  ma20: '月線（20SMA）',
   ema60: '60EMA',
 }
 
 const EMA_SWATCH_COLORS: Record<keyof EmaVisibility, string> = {
   ema10: '#2a78d6',
-  ema20: '#eb6834',
+  ma20: '#eb6834',
   ema60: '#4a3aa7',
 }
 

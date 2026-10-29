@@ -933,9 +933,10 @@ details li + li {
 .market-stats > div { background: #f2f7f5; padding: .9rem; border-radius: .75rem; display: grid; gap: .4rem; }
 .market-stats strong { font-size: 1.3rem; }
 .market-stats span { font-size: .8rem; color: #52645f; }
-.market-table { min-width: 1050px; }
-.market-table td:first-child { min-width: 145px; }
-.market-table td:nth-child(5) { min-width: 290px; max-width: 420px; }
+.market-table { min-width: 0; }
+.market-table th, .market-table td { white-space: normal; overflow-wrap: anywhere; }
+.market-table td:first-child { min-width: 110px; }
+.market-table td:nth-child(5) { min-width: 180px; max-width: 320px; }
 .market-table small { display: block; margin-top: .4rem; }
 .market-table p { margin: 0 0 .5rem; }
 .market-badge { display: inline-block; padding: .2rem .5rem; border-radius: .4rem; font-weight: 600; font-size: .8rem; }

@@ -46,6 +46,20 @@ export function calculateEMA(bars: PriceBar[], period: number): LinePoint[] {
   ).map((value, index) => ({ time: bars[index].date, value: Number(value.toFixed(2)) }))
 }
 
+export function calculateSMA(bars: PriceBar[], period: number): LinePoint[] {
+  if (!Number.isInteger(period) || period < 1) return []
+  const result: LinePoint[] = []
+  let sum = 0
+  bars.forEach((bar, index) => {
+    sum += bar.close
+    if (index >= period) sum -= bars[index - period].close
+    if (index >= period - 1) {
+      result.push({ time: bar.date, value: Number((sum / period).toFixed(2)) })
+    }
+  })
+  return result
+}
+
 // MACD：DIF=短期EMA-長期EMA，訊號線=DIF的EMA，柱狀體=DIF-訊號線。跟後端calculate_macd邏輯一致，
 // 只是這裡用日K(跟K線圖同一份資料)而不是月K(後端條件評估用的是月K)。
 export function calculateMACD(

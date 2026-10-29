@@ -5,19 +5,13 @@ import { RuleStateBadge, RuleStateLine } from '../../rules/components/RuleStateB
 const ROLE_LABELS = { premise: '前提', entry: '進場', exit: '出場' }
 interface Props {
   results: SavedEvaluation[]
-  expected: number
-  disabled: boolean
   busy: boolean
   error?: string
-  onEvaluate: () => void
 }
 export function WatchlistEvaluationCell({
   results,
-  expected,
-  disabled,
   busy,
   error,
-  onEvaluate,
 }: Props) {
   const dataDate = results
     .map((r) => r.result.dataDate)
@@ -42,26 +36,6 @@ export function WatchlistEvaluationCell({
   ]
   return (
     <div className="evaluation-cell" aria-live="polite">
-      <div className="evaluation-actions">
-        <button
-          className="button-secondary"
-          type="button"
-          disabled={disabled || !expected}
-          onClick={onEvaluate}
-        >
-          {results.length ? '重新評估' : '評估'}
-        </button>
-      </div>
-      {busy && <span role="status">更新行情並評估中…</span>}
-      {!results.length && <span className="muted">尚未評估</span>}
-      {dataDate && (
-        <p title={staleTitle || undefined}>
-          <span className={staleResults.length ? 'stale-notice' : undefined}>
-            行情 {dataDate.slice(5).replace('-', '/')}
-          </span>
-          {!!staleResults.length && <span className="status-badge status-warning">行情過期</span>}
-        </p>
-      )}
       <div className="rule-state-list">
         {results.map((r) => (
           <div className="rule-state-item" key={r.ruleId}>
@@ -79,6 +53,16 @@ export function WatchlistEvaluationCell({
           </div>
         ))}
       </div>
+      {busy && <span role="status">更新行情並評估中…</span>}
+      {!results.length && <span className="muted">尚未評估</span>}
+      {dataDate && (
+        <p title={staleTitle || undefined}>
+          <span className={staleResults.length ? 'stale-notice' : undefined}>
+            行情 {dataDate.slice(5).replace('-', '/')}
+          </span>
+          {!!staleResults.length && <span className="status-badge status-warning">行情過期</span>}
+        </p>
+      )}
       {!busy &&
         !error &&
         upperBandMarks.map((mark) => (

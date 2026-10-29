@@ -19,6 +19,7 @@ import type { PriceBar } from '../types'
 import {
   calculateBollingerBands,
   calculateEMA,
+  calculateSMA,
   calculateKD,
   calculateMACD,
 } from '../utils/indicators'
@@ -28,10 +29,9 @@ const UP_COLOR = '#d03b3b'
 const DOWN_COLOR = '#0ca30c'
 
 // EMA疊加線顏色刻意不用紅/綠，避免跟K棒漲跌色混淆。
-const EMA_COLORS = { ema10: '#2a78d6', ema20: '#eb6834', ema60: '#4a3aa7' } as const
+const EMA_COLORS = { ema10: '#2a78d6', ma20: '#eb6834', ema60: '#4a3aa7' } as const
 const KD_COLORS = { k: '#2a78d6', d: '#eb6834' } as const
 // 布林通道另外挑跟EMA不同的色系(aqua/magenta)，避免同一張圖上疊線混淆。
-const BOLLINGER_MID_COLOR = '#1baf7a'
 const BOLLINGER_BAND_COLOR = '#e87ba4'
 const MACD_COLORS = { dif: '#2a78d6', signal: '#eb6834' } as const
 const MACD_HISTOGRAM_UP_COLOR = '#d03b3b'
@@ -44,7 +44,7 @@ const DARK_THEME = { background: '#1b2633', text: '#e8eef4', grid: '#354454' }
 
 export interface EmaVisibility {
   ema10: boolean
-  ema20: boolean
+  ma20: boolean
   ema60: boolean
 }
 
@@ -67,7 +67,7 @@ interface MacdInfo {
 }
 
 interface StockChartProps {
-  priceLines?: { price: number; title: string; color: string }[]
+  priceLines?: { price: number; title: string; color: string; ruleName: string }[]
   markers?: { date: string; state: string; ruleName: string }[]
   bars: PriceBar[]
   emaVisibility: EmaVisibility
@@ -90,14 +90,13 @@ export function StockChart({
   const containerRef = useRef<HTMLDivElement>(null)
   const emaSeriesRef = useRef<Record<keyof EmaVisibility, ISeriesApi<'Line'> | null>>({
     ema10: null,
-    ema20: null,
+    ma20: null,
     ema60: null,
   })
   const bollingerSeriesRef = useRef<{
     upper: ISeriesApi<'Line'> | null
-    mid: ISeriesApi<'Line'> | null
     lower: ISeriesApi<'Line'> | null
-  }>({ upper: null, mid: null, lower: null })
+  }>({ upper: null, lower: null })
   const kdSeriesRef = useRef<{ k: ISeriesApi<'Line'> | null; d: ISeriesApi<'Line'> | null }>({
     k: null,
     d: null,
@@ -157,7 +156,7 @@ export function StockChart({
 
     const emaPeriods: Array<[keyof EmaVisibility, number]> = [
       ['ema10', 10],
-      ['ema20', 20],
+      ['ma20', 20],
       ['ema60', 60],
     ]
     emaPeriods.forEach(([key, period]) => {
@@ -168,7 +167,7 @@ export function StockChart({
         priceLineVisible: false,
         lastValueVisible: false,
       })
-      series.setData(calculateEMA(bars, period))
+      series.setData(key === 'ma20' ? calculateSMA(bars, period) : calculateEMA(bars, period))
       emaSeriesRef.current[key] = series
     })
 
@@ -183,15 +182,6 @@ export function StockChart({
     })
     upperSeries.setData(bollinger.map((p) => ({ time: p.time as Time, value: p.upper })))
 
-    const midSeries = chart.addSeries(LineSeries, {
-      color: BOLLINGER_MID_COLOR,
-      lineWidth: 1,
-      visible: bollingerVisible,
-      priceLineVisible: false,
-      lastValueVisible: false,
-    })
-    midSeries.setData(bollinger.map((p) => ({ time: p.time as Time, value: p.mid })))
-
     const lowerSeries = chart.addSeries(LineSeries, {
       color: BOLLINGER_BAND_COLOR,
       lineWidth: 1,
@@ -202,7 +192,7 @@ export function StockChart({
     })
     lowerSeries.setData(bollinger.map((p) => ({ time: p.time as Time, value: p.lower })))
 
-    bollingerSeriesRef.current = { upper: upperSeries, mid: midSeries, lower: lowerSeries }
+    bollingerSeriesRef.current = { upper: upperSeries, lower: lowerSeries }
 
     // pane 1：KD或MACD對照圖，兩組線都畫出來，用visible切換顯示哪一組(下拉選單控制)，
     // 這樣切換時不用重建圖表，也能同時保留兩邊的crosshair資料可以讀。
@@ -375,7 +365,7 @@ export function StockChart({
     if (!series) return
     priceLinesRef.current.forEach((line) => series.removePriceLine(line))
     priceLinesRef.current = (priceLines ?? []).map((line) => series.createPriceLine({
-      ...line, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true,
+      price: line.price, color: line.color, title: '', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true,
     }))
   }, [bars, priceLines])
 
@@ -407,7 +397,6 @@ export function StockChart({
 
   useEffect(() => {
     bollingerSeriesRef.current.upper?.applyOptions({ visible: bollingerVisible })
-    bollingerSeriesRef.current.mid?.applyOptions({ visible: bollingerVisible })
     bollingerSeriesRef.current.lower?.applyOptions({ visible: bollingerVisible })
   }, [bollingerVisible])
 
@@ -433,6 +422,15 @@ export function StockChart({
           <span>高 {ohlcInfo.high}</span>
           <span>低 {ohlcInfo.low}</span>
           <span>收 {ohlcInfo.close}</span>
+        </div>
+      )}
+      {!!priceLines?.length && (
+        <div className="chart-info-line" aria-label="觸價線圖例">
+          {priceLines.map((line, index) => (
+            <span key={index} style={{ color: line.color }}>
+              — {line.ruleName} 觸價 {line.price.toFixed(2)}
+            </span>
+          ))}
         </div>
       )}
       <div ref={containerRef} style={{ height: 480, width: '100%' }} />

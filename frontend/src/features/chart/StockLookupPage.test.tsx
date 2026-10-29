@@ -15,8 +15,9 @@ const storageKey = 'stock-lookup:last-ticker'
 function Location() {
   return <output data-testid="location">{useLocation().search}</output>
 }
-function setup(url = '/chart') {
+function setup(url = '/chart', watchlist = [{ ticker: '2330' }]) {
   vi.spyOn(apiClient, 'get').mockImplementation(async <T,>(path: string) => {
+    if (path === '/watchlist?limit=500') return watchlist as T
     if (path === '/stocks?limit=20') return [{ ticker: '00400A', name: '預設股票' }] as T
     if (path === '/rules?limit=50') return [1, 2, 3].map((id) => ({
       id, name: `戰法${id}`, isEnabled: id !== 3, conditions: [], logicOperator: 'AND',
@@ -64,10 +65,11 @@ it('URL 股票優先並寫回儲存值', async () => {
   expect(apiClient.get).toHaveBeenCalledWith('/chart/2317?limit=120')
 })
 
-it('沒有記錄時使用清單第一檔', async () => {
+it('沒有記錄時使用觀察清單第一檔', async () => {
   setup()
   await screen.findByTestId('chart')
-  expect(localStorage.getItem(storageKey)).toBe('00400A')
+  expect(localStorage.getItem(storageKey)).toBe('2330')
+  expect(apiClient.get).not.toHaveBeenCalledWith('/chart/00400A?limit=120')
 })
 
 it('localStorage 讀寫失敗時仍可查詢', async () => {
@@ -75,15 +77,21 @@ it('localStorage 讀寫失敗時仍可查詢', async () => {
   vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('停用儲存') })
   setup()
   await screen.findByTestId('chart')
-  expect(apiClient.get).toHaveBeenCalledWith('/chart/00400A?limit=120')
+  expect(apiClient.get).toHaveBeenCalledWith('/chart/2330?limit=120')
 })
 
 it('只傳有觸價的啟用戰法，歷史 UTC 時間換成台北日期', async () => {
   setup('/chart?ticker=2330')
   await waitFor(() => {
     const props = JSON.parse(screen.getByTestId('chart').textContent!)
-    expect(props.priceLines).toEqual([{ price: 98, title: '戰法1 觸價', color: '#991b1b' }])
+    expect(props.priceLines).toEqual([{ price: 98, title: '', ruleName: '戰法1', color: '#991b1b' }])
     expect(props.markers).toEqual([{ date: '2026-10-23', state: 'ENTRY', ruleName: '戰法1' }])
   })
   expect(screen.getByRole('heading', { name: '目前技術指標（2026/10/23，日K）' })).toBeTruthy()
+})
+
+it('觀察清單空白時才退回股票目錄第一檔', async () => {
+  setup('/chart', [])
+  await screen.findByTestId('chart')
+  expect(localStorage.getItem(storageKey)).toBe('00400A')
 })
