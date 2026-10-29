@@ -16,7 +16,14 @@ export interface WatchRule {
   conditions: RuleCondition[]
 }
 
+export interface RuleUpdate {
+  name: string
+  conditions: { conditionId: string; params: Record<string, number | null> }[]
+}
+
 export interface ConditionCatalogItem {
+  paramSchema: Record<string, 'int' | 'float'>
+  originalDefaults: Record<string, number | null>
   id: string
   name: string
   description: string

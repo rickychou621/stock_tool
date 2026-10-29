@@ -15,6 +15,7 @@ class KdGoldenCrossCondition(Condition):
 
     def evaluate(self, bars: list[ConditionBar], params: dict[str, Any]) -> ConditionResult:
         period = int(params.get("period", 9))
+        max_k_at_cross = params.get("max_k_at_cross")
         monthly = resample_to_monthly(bars)
 
         if len(monthly) < period + 1:
@@ -24,9 +25,20 @@ class KdGoldenCrossCondition(Condition):
         (prev_k, prev_d), (cur_k, cur_d) = kd[-2], kd[-1]
 
         crossed = prev_k <= prev_d and cur_k > cur_d
-        state = "黃金交叉" if crossed else "未交叉"
-        reason = f"月K K值={cur_k:.1f}，D值={cur_d:.1f}，{state}"
-        return ConditionResult(crossed, reason, indicators={"k": cur_k, "d": cur_d})
+        is_met = crossed
+        if not crossed:
+            reason = f"KD 未黃金交叉（K {cur_k:.1f}，D {cur_d:.1f}）"
+        elif max_k_at_cross is not None and cur_k > float(max_k_at_cross):
+            is_met = False
+            reason = f"KD 黃金交叉但 K={cur_k:.1f} 已在高檔（>{float(max_k_at_cross):g}）"
+        else:
+            limit = (
+                f"，K ≤ {float(max_k_at_cross):g} ✓" if max_k_at_cross is not None else ""
+            )
+            reason = f"KD 黃金交叉（K {cur_k:.1f} > D {cur_d:.1f}{limit}）"
+        return ConditionResult(
+            is_met, reason, indicators={"k": cur_k, "d": cur_d, "crossed": float(crossed)}
+        )
 
 
 @register_condition
@@ -53,7 +65,10 @@ class MacdPositiveCondition(Condition):
         dif, signal = macd[-1]
 
         is_met = dif > 0 and signal > 0
-        reason = f"月K DIF={dif:.2f}，MACD訊號線={signal:.2f}"
+        reason = "｜".join(
+            f"{name} {value:.2f} > 0 ✓" if value > 0 else f"{name} {value:.2f} ≤ 0 ✗"
+            for name, value in (("DIF", dif), ("MACD", signal))
+        )
         return ConditionResult(
             is_met, reason, indicators={"dif": dif, "signal": signal, "histogram": dif - signal}
         )

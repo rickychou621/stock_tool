@@ -85,7 +85,7 @@ def test_entry_then_hold(with_entry):
                 else rule(condition(met=trigger)))
     entered = classify(strategy, "TEST", bars(2))
     assert entered.state == ENTRY
-    assert entered.reason == ("entry reason" if with_entry else "premise reason")
+    assert entered.reason == ("entry reason｜premise reason" if with_entry else "premise reason")
     held = classify(strategy, "TEST", bars(3))
     assert (held.state, held.reason) == (HOLD, "premise reason")
     assert (held.trigger_price, held.close, held.distance_pct) == (None, None, None)
@@ -248,3 +248,23 @@ def test_strategy_three_has_no_ma_indicators():
     state = classify(strategy, "TEST", bars())
     assert state.ma_distance_pct is None
     assert state.ma_slope_pct is None
+
+
+def test_entry_reason_includes_all_premises_for_or_rule():
+    strategy = rule(
+        condition(met=True), condition(met=False),
+        condition("entry", lambda history: len(history) >= 3),
+        condition("entry", True),
+    )
+    strategy.logic_operator = "OR"
+    state = classify(strategy, "TEST", bars())
+    assert state.state == ENTRY
+    assert state.reason == "entry reason｜entry reason｜premise reason｜premise reason"
+
+
+def test_hold_reason_includes_only_failed_entries_after_all_premises():
+    strategy = rule(
+        condition(), condition(), condition("entry", True), condition("entry", False),
+    )
+    state = classify(strategy, "TEST", bars())
+    assert (state.state, state.reason) == (HOLD, "premise reason｜premise reason｜entry reason")

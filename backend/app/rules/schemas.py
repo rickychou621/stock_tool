@@ -68,3 +68,13 @@ class RuleEvaluationSchema(CamelModel):
     data_date: date | None
     condition_results: list[ConditionEvaluationSchema]
     protective_stop: dict | None = None
+
+
+class WatchRuleConditionUpdateSchema(CamelModel):
+    condition_id: str
+    params: dict
+
+
+class WatchRuleUpdateSchema(CamelModel):
+    name: str
+    conditions: list[WatchRuleConditionUpdateSchema]

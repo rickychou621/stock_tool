@@ -190,3 +190,69 @@ def test_migrated_rule_simulates_monthly_entry_and_each_exit(db, exit_kind):
     else:
         assert trade["entrySignalDate"] == "2022-09-01"
         assert trade["exitSignalDate"] == "2023-02-01"
+
+
+@pytest.mark.parametrize("seeded", [False, True])
+def test_rule_params_v2_repeatable_and_scoped(db, seeded):
+    db.execute("ALTER TABLE watch_rules ADD COLUMN updated_at TEXT")
+    db.create_function("UTC_TIMESTAMP", 0, lambda: "2026-10-29 01:00:00")
+    schemas = {
+        "ma_touch_rebound": {"period": "int", "tolerance": "float"},
+        "ma_rising": {"period": "int", "slope_lookback": "int"},
+        "kd_golden_cross": {},
+        "close_below_ma_days": {"period": "int", "days": "int"},
+    }
+    for cid, schema in schemas.items():
+        db.execute("INSERT OR IGNORE INTO condition_catalog (id) VALUES (?)", (cid,))
+        db.execute("UPDATE condition_catalog SET param_schema = ? WHERE id = ?",
+                   (json.dumps(schema), cid))
+    for cid, params in [
+        ("ma_touch_rebound", {"period": 20, "tolerance": 0.01}),
+        ("ma_rising", {"period": 20, "slope_lookback": 5}),
+        ("kd_golden_cross", {}),
+    ]:
+        db.execute("INSERT INTO watch_rule_conditions VALUES (1, ?, ?, 1, 'entry')",
+                   (cid, json.dumps(params)))
+    if seeded:
+        db.execute("INSERT INTO watch_rules (id, name) VALUES (2, '戰法三')")
+        _apply(db)
+    before = db.execute(
+        "SELECT * FROM watch_rule_conditions WHERE rule_id != 2 "
+        "OR condition_id != 'kd_golden_cross'"
+    ).fetchall()
+    other_rules = db.execute("SELECT * FROM watch_rules WHERE id != 2").fetchall()
+    sql = re.sub(r"--[^\n]*", "", MIGRATION.with_name("023_rule_params_v2.sql").read_text())
+    statements = [s.strip() for s in sql.split(";") if s.strip()]
+    assert statements.pop(0) == "SET NAMES utf8mb4"
+    assert statements.pop(0) == "START TRANSACTION"
+    assert statements.pop() == "COMMIT"
+    for _ in range(2):
+        for statement in statements:
+            db.execute(statement)
+        expected = {
+            "ma_touch_rebound": {**schemas["ma_touch_rebound"], "max_close_distance_pct": "float"},
+            "ma_rising": {**schemas["ma_rising"], "min_slope_pct": "float"},
+            "kd_golden_cross": {"period": "int", "max_k_at_cross": "float"},
+            "close_below_ma_days": {**schemas["close_below_ma_days"], "buffer": "float"},
+        }
+        for cid, schema in expected.items():
+            actual = db.execute(
+                "SELECT param_schema FROM condition_catalog WHERE id = ?", (cid,)
+            ).fetchone()[0]
+            assert json.loads(actual) == schema
+        assert db.execute(
+            "SELECT * FROM watch_rule_conditions WHERE rule_id != 2 "
+            "OR condition_id != 'kd_golden_cross'"
+        ).fetchall() == before
+        assert db.execute("SELECT * FROM watch_rules WHERE id != 2").fetchall() == other_rules
+        target = db.execute(
+            "SELECT params FROM watch_rule_conditions "
+            "WHERE rule_id = 2 AND condition_id = 'kd_golden_cross'"
+        ).fetchall()
+        assert [json.loads(row[0]) for row in target] == (
+            [{"period": 9, "max_k_at_cross": 70}] if seeded else []
+        )
+        if seeded:
+            assert db.execute(
+                "SELECT updated_at FROM watch_rules WHERE id = 2"
+            ).fetchone()[0] == "2026-10-29 01:00:00"

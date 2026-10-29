@@ -980,3 +980,8 @@ details li + li {
 @media (max-width: 900px) {
   .backtest-charts { grid-template-columns: minmax(0, 1fr); }
 }
+
+.rule-parameter-form { padding: 1rem; white-space: normal; }
+.rule-parameter-form fieldset { margin-bottom: 1rem; }
+.rule-parameter-form .status-badge { align-self: flex-start; width: fit-content; }
+.rule-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }

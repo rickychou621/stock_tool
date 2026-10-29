@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.conditions.original_defaults import ORIGINAL_DEFAULTS
 from app.conditions.repository import ConditionRepository
 from app.conditions.schemas import ConditionCatalogSchema
 from app.core.dependencies import get_db
@@ -14,6 +15,8 @@ def list_conditions(db: Session = Depends(get_db)) -> list[ConditionCatalogSchem
     return [
         ConditionCatalogSchema(
             id=c.id,
+            param_schema=c.param_schema,
+            original_defaults=ORIGINAL_DEFAULTS.get(c.id, {}),
             name=c.name,
             description=c.description,
             required_timeframe=c.required_timeframe,

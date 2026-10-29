@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '../../api/client'
 import { RuleList } from './components/RuleList'
 import { RuleEditorForm } from './components/RuleEditorForm'
-import type { ConditionCatalogItem, WatchRule } from './types'
+import type { ConditionCatalogItem, RuleUpdate, WatchRule } from './types'
 
 const LIST_LIMIT = 10
 
@@ -25,6 +25,24 @@ export function RulesPage() {
   const createMutation = useMutation({
     mutationFn: (newRule: Omit<WatchRule, 'id'>) => apiClient.post<WatchRule>('/rules', newRule),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['rules'] }),
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, payload }: { id: number; payload: RuleUpdate }) =>
+      apiClient.put<WatchRule>(`/rules/${id}`, payload),
+    onSuccess: async () => {
+      await Promise.all(
+        [
+          'rules',
+          'watchlist',
+          'saved-evaluations',
+          'rule-state',
+          'backtest-report',
+          'backtest-detail',
+          'watchlist-schedule-latest',
+        ].map((key) => queryClient.invalidateQueries({ queryKey: [key] })),
+      )
+    },
   })
 
   const toggleMutation = useMutation({
@@ -67,6 +85,7 @@ export function RulesPage() {
             rules={rulesQuery.data}
             conditionCatalog={conditionsQuery.data}
             onToggleEnabled={(rule) => toggleMutation.mutate(rule)}
+            onSave={(id, payload) => updateMutation.mutateAsync({ id, payload })}
             onDelete={(ruleId) => deleteMutation.mutate(ruleId)}
           />
         )}

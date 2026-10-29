@@ -13,6 +13,7 @@ from app.rules.schemas import (
     WatchRuleConditionSchema,
     WatchRuleCreateSchema,
     WatchRuleSchema,
+    WatchRuleUpdateSchema,
 )
 from app.rules.service import RuleDeletionBlockedError, RuleService
 from app.rules.state import evaluate_with_state, instrument_kind
@@ -126,3 +127,16 @@ def prepare_evaluation(
             status_code=502, detail="行情更新失敗，請稍後重試；本次未評估。"
         ) from exc
     return {"ticker": ticker, "rowsSynced": rows}
+
+
+@router.put("/{rule_id}", response_model=WatchRuleSchema)
+def update_rule(
+    rule_id: int, payload: WatchRuleUpdateSchema, db: Session = Depends(get_db),
+) -> WatchRuleSchema:
+    try:
+        rule = RuleService(db).update_rule(rule_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return _to_schema(rule)

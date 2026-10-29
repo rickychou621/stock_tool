@@ -16,7 +16,7 @@ ON DUPLICATE KEY UPDATE name = VALUES(name);
 INSERT INTO condition_catalog (id, name, description, required_timeframe, update_frequency, param_schema) VALUES
     ('ema_golden_cross', 'EMA黃金交叉', 'EMA短週期上穿長週期', '分K', 'realtime', JSON_OBJECT('short_period', 'int', 'long_period', 'int')),
     ('bollinger_mid_up', '布林上軌區間(月線上揚)', '月線(20日中軌)上揚，且收盤未跌破月線；突破布林上軌仍符合。符合代表偏多型態，不代表立即進場', '日K', 'daily', JSON_OBJECT('period', 'int', 'num_std', 'float', 'slope_lookback', 'int')),
-    ('kd_golden_cross', 'KD黃金交叉', 'K值上穿D值', '月K', 'monthly', JSON_OBJECT()),
+    ('kd_golden_cross', 'KD黃金交叉', 'K值上穿D值', '月K', 'monthly', JSON_OBJECT('period', 'int', 'max_k_at_cross', 'float')),
     ('macd_positive', 'MACD轉正', 'DIF與MACD值皆大於0', '月K', 'monthly', JSON_OBJECT()),
     ('macd_histogram_rising', 'MACD動能增強(柱狀體上升)', 'MACD柱狀體(DIF-訊號線)較上月增加：綠柱縮減或紅柱增加', '月K', 'monthly', JSON_OBJECT('short_period', 'int', 'long_period', 'int', 'signal_period', 'int')),
     ('volume_spike', '爆量', '成交量超過近期均量的指定倍數', '日K', 'daily', JSON_OBJECT('multiplier', 'float'))
@@ -30,7 +30,7 @@ ON DUPLICATE KEY UPDATE name = VALUES(name);
 
 INSERT INTO watch_rule_conditions (rule_id, condition_id, params, sort_order) VALUES
     (1, 'bollinger_mid_up', JSON_OBJECT('period', 20), 0),
-    (2, 'kd_golden_cross', JSON_OBJECT(), 0),
+    (2, 'kd_golden_cross', JSON_OBJECT('period', 9, 'max_k_at_cross', 70), 0),
     (2, 'macd_positive', JSON_OBJECT(), 1),
     (2, 'macd_histogram_rising', JSON_OBJECT(), 2),
     (3, 'ema_golden_cross', JSON_OBJECT('short_period', 10, 'long_period', 60), 0),

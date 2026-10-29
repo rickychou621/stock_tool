@@ -9,3 +9,5 @@ class ConditionCatalogSchema(CamelModel):
     description: str
     required_timeframe: str
     update_frequency: str
+    param_schema: dict[str, str]
+    original_defaults: dict[str, float | int | None]

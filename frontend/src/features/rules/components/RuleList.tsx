@@ -1,4 +1,7 @@
-import type { ConditionCatalogItem, RuleCondition, WatchRule } from '../types'
+import { Fragment, useState } from 'react'
+import { RuleParameterForm } from './RuleParameterForm'
+import { differingParams, displayValue, PARAM_LABELS as FIELD_LABELS } from '../parameters'
+import type { ConditionCatalogItem, RuleCondition, RuleUpdate, WatchRule } from '../types'
 
 const ROLES = ['premise', 'entry', 'exit'] as const
 
@@ -8,6 +11,9 @@ const PARAM_LABELS: Record<string, (value: number) => string> = {
   tolerance: (v) => `容許 ${pct(v)}`,
   days: (v) => `連續 ${v} 天`,
   buffer: (v) => `緩衝 ${pct(v)}`,
+  min_slope_pct: (v) => `月線斜率下限 ${pct(v)}`,
+  max_close_distance_pct: (v) => `收盤距月線上限 ${pct(v)}`,
+  max_k_at_cross: (v) => `交叉時 K 值上限 ${v}`,
   threshold: (v) => `門檻 ${v}`,
   short_period: (v) => `短 ${v}`,
   long_period: (v) => `長 ${v}`,
@@ -32,10 +38,18 @@ interface RuleListProps {
   rules: WatchRule[]
   conditionCatalog: ConditionCatalogItem[]
   onToggleEnabled: (rule: WatchRule) => void
+  onSave: (id: number, payload: RuleUpdate) => Promise<unknown>
   onDelete: (ruleId: number) => void
 }
 
-export function RuleList({ rules, conditionCatalog, onToggleEnabled, onDelete }: RuleListProps) {
+export function RuleList({
+  rules,
+  conditionCatalog,
+  onToggleEnabled,
+  onDelete,
+  onSave,
+}: RuleListProps) {
+  const [editingId, setEditingId] = useState<number | null>(null)
   if (rules.length === 0) {
     return <p className="muted">目前沒有任何規則，新增一條開始監控。</p>
   }
@@ -58,53 +72,81 @@ export function RuleList({ rules, conditionCatalog, onToggleEnabled, onDelete }:
         </thead>
         <tbody>
           {rules.map((rule) => (
-            <tr key={rule.id}>
-              <td>{rule.name}</td>
-              {ROLES.map((role) => {
-                const conditions = rule.conditions.filter((condition) => condition.role === role)
-                const operator =
-                  role === 'premise' ? rule.logicOperator : role === 'entry' ? 'AND' : 'OR'
-                return (
-                  <td key={role}>
-                    {conditions.length === 0 && <span className="muted">—</span>}
-                    {conditions.length > 1 && (
-                      <small className="muted">{operator === 'AND' ? '全部成立' : '任一成立'}</small>
-                    )}
-                    {conditions.map((condition, index) => (
-                      <div key={index} className="rule-condition">
-                        <span>{conditionName(condition.conditionId)}</span>
-                        {condition.conditionId === 'close_below_ma_days' &&
-                          typeof condition.params.buffer === 'number' &&
-                          condition.params.buffer > 0 && (
+            <Fragment key={rule.id}>
+              <tr>
+                <td>{rule.name}</td>
+                {ROLES.map((role) => {
+                  const conditions = rule.conditions.filter((condition) => condition.role === role)
+                  const operator =
+                    role === 'premise' ? rule.logicOperator : role === 'entry' ? 'AND' : 'OR'
+                  return (
+                    <td key={role}>
+                      {conditions.length === 0 && <span className="muted">—</span>}
+                      {conditions.length > 1 && (
+                        <small className="muted">
+                          {operator === 'AND' ? '全部成立' : '任一成立'}
+                        </small>
+                      )}
+                      {conditions.map((condition, index) => (
+                        <div key={index} className="rule-condition">
+                          <span>{conditionName(condition.conditionId)}</span>
+                          {differingParams(
+                            condition.params,
+                            conditionCatalog.find((c) => c.id === condition.conditionId)
+                              ?.originalDefaults ?? {},
+                          ).map((key) => (
                             <span
+                              key={key}
                               className="status-badge status-warning"
-                              title={`原文為收盤跌破月線（緩衝 0%），目前設定月線下方 ${pct(condition.params.buffer)}`}
+                              title={`${FIELD_LABELS[key] ?? key}：原文 ${displayValue(key, conditionCatalog.find((c) => c.id === condition.conditionId)?.originalDefaults[key])}，目前 ${displayValue(key, condition.params[key])}`}
                             >
                               與原文不同
                             </span>
+                          ))}
+                          {Object.keys(condition.params).length > 0 && (
+                            <small className="muted">
+                              {paramSummary(condition.conditionId, condition.params)}
+                            </small>
                           )}
-                        {Object.keys(condition.params).length > 0 && (
-                          <small className="muted">{paramSummary(condition.conditionId, condition.params)}</small>
-                        )}
-                      </div>
-                    ))}
+                        </div>
+                      ))}
+                    </td>
+                  )
+                })}
+                <td>
+                  <input
+                    type="checkbox"
+                    aria-label={`啟用戰法：${rule.name}`}
+                    checked={rule.isEnabled}
+                    onChange={() => onToggleEnabled(rule)}
+                  />
+                </td>
+                <td>
+                  <button
+                    type="button"
+                    aria-expanded={editingId === rule.id}
+                    onClick={() => setEditingId(rule.id)}
+                  >
+                    編輯
+                  </button>
+                  <button className="button-danger" type="button" onClick={() => onDelete(rule.id)}>
+                    刪除
+                  </button>
+                </td>
+              </tr>
+              {editingId === rule.id && (
+                <tr>
+                  <td colSpan={6}>
+                    <RuleParameterForm
+                      rule={rule}
+                      catalog={conditionCatalog}
+                      onSave={onSave}
+                      onCancel={() => setEditingId(null)}
+                    />
                   </td>
-                )
-              })}
-              <td>
-                <input
-                  type="checkbox"
-                  aria-label={`啟用戰法：${rule.name}`}
-                  checked={rule.isEnabled}
-                  onChange={() => onToggleEnabled(rule)}
-                />
-              </td>
-              <td>
-                <button className="button-danger" type="button" onClick={() => onDelete(rule.id)}>
-                  刪除
-                </button>
-              </td>
-            </tr>
+                </tr>
+              )}
+            </Fragment>
           ))}
         </tbody>
       </table>

@@ -100,14 +100,22 @@ def classify(rule, ticker, bars, result=None, *, kind="stock", near_exit_pct=Non
         ):
             return outcome(NO_DATA, "前一個有效交易日資料不足：" + _missing_reason(previous))
         if not _triggered(previous):
-            role = "entry" if result.entry_triggered is not None else "premise"
-            return outcome(ENTRY, reasons(role))
+            return outcome(ENTRY, "｜".join(
+                c.reason for role in ("entry", "premise")
+                for c in result.condition_results if c.role == role
+            ))
     if near_exit_pct is None:
         near_exit_pct = get_settings().near_exit_pct
     if result.premise_met and distance is not None and distance <= near_exit_pct:
         return outcome(NEAR_EXIT, f"收盤距觸價 {distance * 100:.1f}%")
     if result.premise_met:
-        return outcome(HOLD, reasons("premise"))
+        if result.entry_triggered is None:
+            return outcome(HOLD, reasons("premise"))
+        return outcome(HOLD, "｜".join(
+            c.reason for role in ("premise", "entry")
+            for c in result.condition_results
+            if c.role == role and (role == "premise" or not c.is_met)
+        ))
     return outcome(NONE, next(
         (c.reason for c in result.condition_results if c.role == "premise" and not c.is_met), "",
     ))
