@@ -1,5 +1,6 @@
 """Classify one rule evaluation and its previous evaluation day."""
 
+import re
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -42,11 +43,21 @@ def _triggered(result):
     return result.is_met
 
 
+_REQUIRED_BARS = re.compile(r"^(.+資料不足)：需要 (\d+) 根")
+
+
 def _missing_reason(result):
     missing = [c.reason for c in result.condition_results if not c.data_sufficient]
     if not missing:
         missing = [c.reason for c in result.condition_results if not c.is_met]
-    return "；".join(missing) or "無可用的評估資料"
+    # Same timeframe shortage: keep only the condition that needs the most bars.
+    kept: dict[str, tuple[int, str]] = {}
+    for reason in missing:
+        match = _REQUIRED_BARS.match(reason)
+        key, need = (match.group(1), int(match.group(2))) if match else (reason, 0)
+        if key not in kept or need > kept[key][0]:
+            kept[key] = (need, reason)
+    return "；".join(reason for _, reason in kept.values()) or "無可用的評估資料"
 
 
 def classify(rule, ticker, bars, result=None, *, kind="stock", near_exit_pct=None) -> RuleState:

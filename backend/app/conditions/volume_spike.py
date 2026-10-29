@@ -1,6 +1,11 @@
 from typing import Any
 
-from app.conditions.base import Condition, ConditionResult, UpdateFrequency
+from app.conditions.base import (
+    Condition,
+    ConditionResult,
+    UpdateFrequency,
+    insufficient_data_reason,
+)
 from app.conditions.registry import register_condition
 from app.conditions.types import ConditionBar
 
@@ -17,7 +22,10 @@ class VolumeSpikeCondition(Condition):
         lookback = int(params.get("lookback", 20))
 
         if len(bars) < lookback + 1:
-            return ConditionResult(False, "資料不足，無法判斷", data_sufficient=False)
+            return ConditionResult(
+                False, insufficient_data_reason(bars, lookback + 1, len(bars)),
+                data_sufficient=False,
+            )
 
         recent = bars[-(lookback + 1) : -1]  # 不含當天，取前lookback天
         avg_volume = sum(b.volume for b in recent) / lookback

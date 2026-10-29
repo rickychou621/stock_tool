@@ -18,6 +18,8 @@ export interface TodayMatchItem {
 }
 
 export interface ScanSummary {
+  baselineDate: string | null
+  finishedAt: string | null
   rulesEvaluated: number
   excluded: number
   excludedCategories: string[]

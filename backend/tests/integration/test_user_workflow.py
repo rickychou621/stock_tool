@@ -1,6 +1,6 @@
 """API workflow tests use an isolated SQLite database and no external network."""
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -85,7 +85,12 @@ def run_scan(client):
 
 def test_scan_only_returns_matches_and_never_sends_telegram(context):
     client, db, _, sent = context
+    started = datetime.now(UTC)
     payload = run_scan(client)
+    latest_date = db.scalar(select(func.max(StockPriceDaily.trade_date)))
+    assert payload["baselineDate"] == latest_date.isoformat()
+    assert payload["finishedAt"] is not None
+    assert started <= datetime.fromisoformat(payload["finishedAt"]) <= datetime.now(UTC)
     assert payload["stocksScanned"] == 3
     assert payload["excluded"] == 0
     assert payload["matches"][0]["name"] == "2330"

@@ -1,6 +1,11 @@
 from typing import Any
 
-from app.conditions.base import Condition, ConditionResult, UpdateFrequency
+from app.conditions.base import (
+    Condition,
+    ConditionResult,
+    UpdateFrequency,
+    insufficient_data_reason,
+)
 from app.conditions.indicators import calculate_kd, calculate_macd, resample_to_monthly
 from app.conditions.registry import register_condition
 from app.conditions.types import ConditionBar
@@ -19,7 +24,10 @@ class KdGoldenCrossCondition(Condition):
         monthly = resample_to_monthly(bars)
 
         if len(monthly) < period + 1:
-            return ConditionResult(False, "月K資料不足，無法判斷", data_sufficient=False)
+            return ConditionResult(
+                False, insufficient_data_reason(bars, period + 1, len(monthly), "月 K"),
+                data_sufficient=False,
+            )
 
         kd = calculate_kd(monthly, period)
         (prev_k, prev_d), (cur_k, cur_d) = kd[-2], kd[-1]
@@ -58,7 +66,10 @@ class MacdPositiveCondition(Condition):
         # 不然DIF/MACD訊號線算出來的意義不大(目前追蹤的股票同步天數不夠長時，
         # 這個條件會持續回報「資料不足」，這是正確反映資料量不夠，不是bug)。
         if len(monthly) < long_period:
-            return ConditionResult(False, "月K資料不足，無法判斷", data_sufficient=False)
+            return ConditionResult(
+                False, insufficient_data_reason(bars, long_period, len(monthly), "月 K"),
+                data_sufficient=False,
+            )
 
         closes = [b.close for b in monthly]
         macd = calculate_macd(closes, short_period, long_period, signal_period)
@@ -96,7 +107,10 @@ class MacdHistogramRisingCondition(Condition):
         monthly = resample_to_monthly(bars)
 
         if len(monthly) < long_period + 1:
-            return ConditionResult(False, "月K資料不足，無法判斷", data_sufficient=False)
+            return ConditionResult(
+                False, insufficient_data_reason(bars, long_period + 1, len(monthly), "月 K"),
+                data_sufficient=False,
+            )
 
         closes = [b.close for b in monthly]
         macd = calculate_macd(closes, short_period, long_period, signal_period)
@@ -123,7 +137,10 @@ class KdHighDeathCrossCondition(Condition):
         threshold = float(params.get("threshold", 70))
         monthly = resample_to_monthly(bars)
         if len(monthly) < period + 1:
-            return ConditionResult(False, "月K資料不足，無法判斷", data_sufficient=False)
+            return ConditionResult(
+                False, insufficient_data_reason(bars, period + 1, len(monthly), "月 K"),
+                data_sufficient=False,
+            )
 
         kd = calculate_kd(monthly, period)
         (prev_k, prev_d), (cur_k, cur_d) = kd[-2], kd[-1]
@@ -151,7 +168,10 @@ class MacdNegativeAnyCondition(Condition):
         signal_period = int(params.get("signal_period", 9))
         monthly = resample_to_monthly(bars)
         if len(monthly) < long_period:
-            return ConditionResult(False, "月K資料不足，無法判斷", data_sufficient=False)
+            return ConditionResult(
+                False, insufficient_data_reason(bars, long_period, len(monthly), "月 K"),
+                data_sufficient=False,
+            )
 
         macd = calculate_macd(
             [bar.close for bar in monthly], short_period, long_period, signal_period

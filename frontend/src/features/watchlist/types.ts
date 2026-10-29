@@ -20,5 +20,7 @@ export interface SavedEvaluation {
   ruleName: string
   result: RuleEvaluationResult
   evaluatedAt: string
+  expectedDataDate?: string | null
+  marketDataStale?: boolean
   stale: boolean
 }

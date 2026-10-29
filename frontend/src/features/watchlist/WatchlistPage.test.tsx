@@ -57,7 +57,7 @@ const completedRun = {
   errors: [] as { id: number; ticker: string; reason: string }[],
 }
 const clients: QueryClient[] = []
-function setup(run: typeof completedRun | null = null, pending = false, failed = false) {
+function setup(run: typeof completedRun | null = null, pending = false, failed = false, saved = evaluations, stocks = items) {
   const scroll = vi.fn()
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
@@ -69,9 +69,9 @@ function setup(run: typeof completedRun | null = null, pending = false, failed =
       if (pending) return new Promise<T>(() => {})
     }
     return {
-      '/watchlist?limit=500': items,
+      '/watchlist?limit=500': stocks,
       '/rules?limit=50': rules,
-      '/watchlist/evaluations': evaluations,
+      '/watchlist/evaluations': saved,
       '/watchlist-schedule/settings': { enabled: true, ruleIds: [1, 2] },
       '/watchlist-schedule/latest': run,
     }[path] as T
@@ -94,11 +94,11 @@ afterEach(() => {
   delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView
 })
 
-it('摘要卡依各股最緊急狀態計數，切換出場篩選並再次點擊恢復全部', async () => {
+it('摘要卡依股票與戰法計數，切換出場篩選並再次點擊恢復全部', async () => {
   const { scroll } = setup()
-  const exit = await screen.findByRole('button', { name: /今日該出場 2 檔/ })
-  expect(screen.getByRole('button', { name: /今日進場訊號 2 檔/ })).toBeTruthy()
-  expect(screen.getByRole('button', { name: /接近觸價 1 檔/ })).toBeTruthy()
+  const exit = await screen.findByRole('button', { name: /今日該出場 2 筆/ })
+  expect(screen.getByRole('button', { name: /今日進場訊號 6 筆/ })).toBeTruthy()
+  expect(screen.getByRole('button', { name: /接近觸價 1 筆/ })).toBeTruthy()
   const table = screen.getByRole('table')
   expect(
     within(table)
@@ -113,7 +113,7 @@ it('摘要卡依各股最緊急狀態計數，切換出場篩選並再次點擊�
       .map((link) => link.textContent),
   ).toEqual(['1001 股票 1', '1002 股票 2'])
   expect(scroll).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
-  expect(scroll.mock.instances[0]).toBe(screen.getByLabelText('股票狀態計數'))
+  expect(scroll.mock.instances[0]).toBe(screen.getByLabelText('戰法狀態計數'))
   fireEvent.click(exit)
   expect(exit.getAttribute('aria-pressed')).toBe('false')
   expect(within(table).getAllByRole('link')).toHaveLength(5)
@@ -151,6 +151,18 @@ it.each([false, true])('評估結果讀取中或失敗時摘要顯示破折號',
   setup(null, !failed, failed)
   if (failed) await screen.findByRole('alert')
   for (const title of ['今日該出場', '今日進場訊號', '接近觸價']) {
-    expect(screen.getByRole('button', { name: new RegExp(`${title} — 檔`) })).toBeTruthy()
+    expect(screen.getByRole('button', { name: new RegExp(`${title} — 筆`) })).toBeTruthy()
   }
+})
+
+it('同一檔不同戰法的接近出場與出場各自計數並可篩選', async () => {
+  setup(null, false, false, [
+    { ...evaluations[0], state: 'NEAR_EXIT' },
+    { ...evaluations[1], state: 'EXIT' },
+  ], [{ ...items[0], ticker: '3711', stockName: '日月光投控' }])
+  const nearExit = await screen.findByRole('button', { name: '接近出場 1' })
+  expect(screen.getByRole('button', { name: '出場 1' })).toBeTruthy()
+  expect(screen.getByText('依戰法計算，同一檔可重複')).toBeTruthy()
+  fireEvent.click(nearExit)
+  expect(within(screen.getByRole('table')).getByRole('link', { name: '3711 日月光投控' })).toBeTruthy()
 })

@@ -32,6 +32,8 @@ class ScanIssueSchema(CamelModel):
 
 
 class ScanSummarySchema(CamelModel):
+    baseline_date: date | None = None
+    finished_at: datetime | None = None
     rules_evaluated: int
     stocks_scanned: int
     new_alerts: int

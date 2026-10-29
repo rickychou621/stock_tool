@@ -1,6 +1,11 @@
 from typing import Any
 
-from app.conditions.base import Condition, ConditionResult, UpdateFrequency
+from app.conditions.base import (
+    Condition,
+    ConditionResult,
+    UpdateFrequency,
+    insufficient_data_reason,
+)
 from app.conditions.indicators import calculate_ema
 from app.conditions.registry import register_condition
 from app.conditions.types import ConditionBar
@@ -21,7 +26,10 @@ class EmaGoldenCrossCondition(Condition):
 
         closes = [b.close for b in bars]
         if len(closes) < long_period + 2:
-            return ConditionResult(False, "資料不足，無法判斷", data_sufficient=False)
+            return ConditionResult(
+                False, insufficient_data_reason(bars, long_period + 2, len(closes)),
+                data_sufficient=False,
+            )
 
         ema_short = calculate_ema(closes, short_period)
         ema_long = calculate_ema(closes, long_period)

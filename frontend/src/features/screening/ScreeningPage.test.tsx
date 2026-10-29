@@ -8,6 +8,7 @@ import { ScreeningPage } from './ScreeningPage'
 import type { ScanJob, ScanSummary } from './types'
 
 const summary: ScanSummary = {
+  baselineDate: '2026-10-28', finishedAt: '2026-10-29T06:05:00Z',
   rulesEvaluated: 1, stocksScanned: 2, newAlerts: 1, excluded: 0, excludedCategories: [], issues: [],
   matches: [{
     id: 1, ticker: '2330', name: '台積電', ruleName: '戰法', state: 'ENTRY',
@@ -104,7 +105,35 @@ it('行情過期可篩選且不通知，排除文字依實際類別顯示', asyn
     .toBe(true)
   expect(screen.getByText(/已排除 3 檔債券／期貨ETF/)).toBeTruthy()
   fireEvent.click(filter)
-  expect(screen.getByText('戰法 行情過期')).toBeTruthy()
+  expect(screen.getByText('戰法：行情過期')).toBeTruthy()
   expect(screen.getByText('行情過期原因')).toBeTruthy()
+  client.clear()
+})
+
+it('隱藏出場卡片與篩選，顯示掃描基準與範圍說明', async () => {
+  const { client } = setup({
+    jobId: 'exit', status: 'done', done: 2, total: 2, error: null,
+    summary: { ...summary, matches: [
+      ...summary.matches,
+      { ...summary.matches[0], id: null, ticker: '3711', state: 'EXIT' },
+    ] },
+  })
+  await screen.findByText('本次掃描結果')
+  expect(screen.queryByRole('button', { name: /^出場 / })).toBeNull()
+  expect(screen.queryByText('出場訊號')).toBeNull()
+  expect(screen.queryByRole('link', { name: /3711/ })).toBeNull()
+  expect(screen.getByRole('link', { name: /2330/ })).toBeTruthy()
+  expect(screen.getByText('基準日 2026-10-28・掃描時間 10/29 14:05')).toBeTruthy()
+  expect(screen.getByText(/本頁只檢查已同步行情的 2 檔/)).toBeTruthy()
+  expect(screen.getByText('篩選數字依戰法計算（筆），同一檔可重複')).toBeTruthy()
+  client.clear()
+})
+
+it('掃描日期與時間缺值顯示破折號', async () => {
+  const { client } = setup({
+    jobId: 'missing-time', status: 'done', done: 2, total: 2, error: null,
+    summary: { ...summary, baselineDate: null, finishedAt: null },
+  })
+  await screen.findByText('基準日 —・掃描時間 —')
   client.clear()
 })

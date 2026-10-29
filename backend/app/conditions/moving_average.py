@@ -1,6 +1,11 @@
 from typing import Any
 
-from app.conditions.base import Condition, ConditionResult, UpdateFrequency
+from app.conditions.base import (
+    Condition,
+    ConditionResult,
+    UpdateFrequency,
+    insufficient_data_reason,
+)
 from app.conditions.registry import register_condition
 from app.conditions.types import ConditionBar
 
@@ -21,7 +26,10 @@ class MaRisingCondition(Condition):
         period = int(params.get("period", 20))
         slope_lookback = int(params.get("slope_lookback", 5))
         if len(bars) < period + slope_lookback:
-            return ConditionResult(False, "資料不足，無法判斷", data_sufficient=False)
+            return ConditionResult(
+                False, insufficient_data_reason(bars, period + slope_lookback, len(bars)),
+                data_sufficient=False,
+            )
 
         ma = _ma_at(bars, period, len(bars))
         ma_prev = _ma_at(bars, period, len(bars) - slope_lookback)
@@ -52,7 +60,10 @@ class PriceTouchMaCondition(Condition):
         period = int(params.get("period", 20))
         tolerance = float(params.get("tolerance", 0.01))
         if len(bars) < period:
-            return ConditionResult(False, "資料不足，無法判斷", data_sufficient=False)
+            return ConditionResult(
+                False, insufficient_data_reason(bars, period, len(bars)),
+                data_sufficient=False,
+            )
 
         ma = _ma_at(bars, period, len(bars))
         latest = bars[-1]
@@ -83,7 +94,10 @@ class CloseBelowMaDaysCondition(Condition):
         days = int(params.get("days", 2))
         buffer = float(params.get("buffer", 0))
         if len(bars) < period + days - 1:
-            return ConditionResult(False, "資料不足，無法判斷", data_sufficient=False)
+            return ConditionResult(
+                False, insufficient_data_reason(bars, period + days - 1, len(bars)),
+                data_sufficient=False,
+            )
 
         ma = _ma_at(bars, period, len(bars))
         below_days = 0
@@ -121,7 +135,10 @@ class MaTouchReboundCondition(Condition):
         period = int(params.get("period", 20))
         tolerance = float(params.get("tolerance", 0.01))
         if len(bars) < period + 1:
-            return ConditionResult(False, "資料不足，無法判斷", data_sufficient=False)
+            return ConditionResult(
+                False, insufficient_data_reason(bars, period + 1, len(bars)),
+                data_sufficient=False,
+            )
         ma = _ma_at(bars, period, len(bars))
         prev_ma = _ma_at(bars, period, len(bars) - 1)
         previous, latest = bars[-2:]

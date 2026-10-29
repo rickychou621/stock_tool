@@ -35,3 +35,12 @@ class Condition(ABC):
         """輸入依日期升冪排序的日K序列(還原股價)與該條件的參數，回傳是否成立及觸發原因。
         月K相關的條件自己內部做resample，呼叫端一律只需要準備日K。"""
         raise NotImplementedError
+
+
+def insufficient_data_reason(
+    bars: list[ConditionBar], required: int, current: int, timeframe: str = "日 K",
+) -> str:
+    reason = f"{timeframe} 資料不足：需要 {required} 根，目前 {current} 根"
+    if bars:
+        reason += f"（最早行情 {bars[0].trade_date:%Y/%m}）"
+    return reason

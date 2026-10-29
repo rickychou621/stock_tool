@@ -49,3 +49,5 @@ class SavedEvaluationSchema(CamelModel):
     evaluated_at: datetime
     stale: bool
     state: str
+    expected_data_date: date | None = None
+    market_data_stale: bool = False

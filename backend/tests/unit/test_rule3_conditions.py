@@ -135,3 +135,10 @@ def test_strategy_three_entry_requires_positive_macd_and_k_limit(monkeypatch, k,
         )
     else:
         assert "MACD -1.20 ≤ 0 ✗" in state.reason
+
+
+def test_insufficient_months_reports_counts_and_first_market_month():
+    bars = [ConditionBar(date(2026, month, 1), 50, 50, 50, 50, 1000)
+            for month in range(2, 10)]
+    result = get_condition("macd_positive")().evaluate(bars, {"long_period": 35})
+    assert result.reason == "月 K 資料不足：需要 35 根，目前 8 根（最早行情 2026/02）"

@@ -358,7 +358,7 @@ def test_long_history_and_unsupported_rule_do_not_block_valid_rule(factory, monk
     monkeypatch.setattr(MarketDataService, "sync_daily_prices", sync)
     failures = process_stock(factory, 1, "2330", [1, 3, 4], DAY)
     assert sync.call_args.kwargs["days"] == 51 * 31
-    assert any("月K資料不足" in error for error in failures)
+    assert any("月 K 資料不足" in error for error in failures)
     assert any("無法準備戰法" in error for error in failures)
     with factory() as db:
         assert db.scalar(select(WatchlistEvaluation)).rule_id == 1
@@ -990,3 +990,35 @@ def test_validate_bars_names_invalid_volume(factory, volume):
         with pytest.raises(ValueError) as error:
             validate_bars(bars, DAY)
         assert str(error.value) == f"{bars[-2].trade_date} 成交量無效：{volume}"
+
+
+@pytest.mark.parametrize("frequency,data_date,expected,stale", [
+    ("daily", "2026-10-09", "2026-10-12", True),
+    ("daily", "2026-10-12", "2026-10-12", False),
+    ("weekly", "2026-10-09", "2026-10-09", False),
+    ("weekly", "2026-10-02", "2026-10-09", True),
+    ("daily", None, "2026-10-12", False),
+])
+def test_saved_market_data_freshness(factory, frequency, data_date, expected, stale):
+    seed_bars(factory)
+    seed_saved(factory)
+    with factory() as db:
+        db.get(WatchRule, 1).evaluation_frequency = frequency
+        saved = db.scalar(select(WatchlistEvaluation).where(WatchlistEvaluation.rule_id == 1))
+        saved.result = {"dataDate": data_date, "state": {"state": "HOLD"}}
+        db.commit()
+
+    def dependency():
+        with factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = dependency
+    try:
+        with TestClient(app) as client:
+            response = client.get("/watchlist/evaluations")
+            assert response.status_code == 200
+            row = next(r for r in response.json() if r["ruleId"] == 1)
+            assert row["expectedDataDate"] == expected
+            assert row["marketDataStale"] is stale
+    finally:
+        app.dependency_overrides.clear()

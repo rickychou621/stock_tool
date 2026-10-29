@@ -1,6 +1,11 @@
 from typing import Any
 
-from app.conditions.base import Condition, ConditionResult, UpdateFrequency
+from app.conditions.base import (
+    Condition,
+    ConditionResult,
+    UpdateFrequency,
+    insufficient_data_reason,
+)
 from app.conditions.indicators import calculate_bollinger_bands
 from app.conditions.registry import register_condition
 from app.conditions.types import ConditionBar
@@ -21,7 +26,10 @@ class BollingerMidUpCondition(Condition):
 
         closes = [b.close for b in bars]
         if len(closes) < period + slope_lookback:
-            return ConditionResult(False, "資料不足，無法判斷", data_sufficient=False)
+            return ConditionResult(
+                False, insufficient_data_reason(bars, period + slope_lookback, len(closes)),
+                data_sufficient=False,
+            )
 
         bands = calculate_bollinger_bands(closes, period, num_std)
         upper_now, mid_now, _ = bands[-1]  # 上面已確認資料筆數足夠，不會是None

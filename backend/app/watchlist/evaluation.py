@@ -3,13 +3,14 @@
 import hashlib
 import json
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.market_data.models import Stock
 from app.market_data.service import MarketDataService
+from app.rules.freshness import expected_data_date, latest_trading_days
 from app.rules.models import WatchRule
 from app.rules.preparation import PreparationError, history_days
 from app.rules.protective_stop import protective_stop
@@ -47,10 +48,17 @@ class WatchlistEvaluationService:
             .where(HoldingsWatchlist.is_active.is_(True))
             .limit(25000)
         ).all()
-        return [self._schema(saved, stock, rule) for saved, stock, rule in rows]
+        latest, trading_days = latest_trading_days(self._db)
+        return [self._schema(saved, stock, rule, latest, trading_days)
+                for saved, stock, rule in rows]
 
     @staticmethod
-    def _schema(saved, stock, rule):
+    def _schema(saved, stock, rule, latest, trading_days):
+        expected = expected_data_date(latest, trading_days, rule.evaluation_frequency)
+        data_date = saved.result.get("dataDate")
+        market_data_stale = bool(
+            data_date and expected and date.fromisoformat(data_date) < expected
+        )
         stale = (
             saved.data_version != stock.data_version
             or saved.rule_fingerprint != fingerprint(rule)
@@ -62,6 +70,8 @@ class WatchlistEvaluationService:
             result=saved.result,
             evaluated_at=saved.evaluated_at.replace(tzinfo=UTC),
             stale=stale,
+            expected_data_date=expected,
+            market_data_stale=market_data_stale,
             state=(
                 "STALE" if stale or not saved.result.get("state")
                 else saved.result["state"]["state"]
@@ -93,6 +103,7 @@ class WatchlistEvaluationService:
         self._db.refresh(stock)
         version = stock.data_version
         output = []
+        latest, trading_days = latest_trading_days(self._db)
         kind = instrument_kind(self._db, item.ticker)
         for rule in rules:
             result = None
@@ -145,5 +156,5 @@ class WatchlistEvaluationService:
             saved.data_version = version
             saved.rule_fingerprint = rule_fingerprint
             self._db.commit()
-            output.append(self._schema(saved, stock, rule))
+            output.append(self._schema(saved, stock, rule, latest, trading_days))
         return output

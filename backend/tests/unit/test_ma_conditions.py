@@ -65,7 +65,8 @@ def test_data_sufficiency_boundary(condition, params, required):
         result = condition().evaluate(_bars([100.0] * count), params)
         assert result.is_met is False
         assert result.data_sufficient is False
-        assert result.reason == "資料不足，無法判斷"
+        assert result.reason.startswith(f"日 K 資料不足：需要 {required} 根，目前 {count} 根")
+        assert ("最早行情" in result.reason) is bool(count)
         assert result.indicators == {}
     assert condition().evaluate(_bars([100.0] * required), params).data_sufficient
 

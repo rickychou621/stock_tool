@@ -67,13 +67,19 @@ export function WatchlistPage() {
   const visible = items.filter(
     (i) =>
       (sector === 'all' || (i.sector || '未分類') === sector) &&
-      (filter === 'all' || statusFor(i) === filter),
+      (filter === 'all' || resultsFor(i).some((r) => r.state === filter)),
   )
   const stateCodes = (Object.keys(STATE_URGENCY) as RuleStateCode[]).sort(
     (a, b) => STATE_URGENCY[a] - STATE_URGENCY[b],
   )
   const counts = Object.fromEntries(
-    stateCodes.map((state) => [state, items.filter((item) => statusFor(item) === state).length]),
+    stateCodes.map((state) => [
+      state,
+      items.reduce(
+        (total, item) => total + resultsFor(item).filter((r) => r.state === state).length,
+        0,
+      ),
+    ]),
   )
   if (sort === 'urgent') {
     const priority = (item: WatchlistItem) => {
@@ -179,7 +185,7 @@ export function WatchlistPage() {
               saved.isError
                 ? '—'
                 : counts[state]}
-              <small> 檔</small>
+              <small> 筆</small>
             </strong>
             <small className="muted">{description}</small>
           </button>
@@ -227,7 +233,7 @@ export function WatchlistPage() {
             {progress}
           </p>
         )}
-        <div ref={stateCountsRef} className="state-counts" aria-label="股票狀態計數">
+        <div ref={stateCountsRef} className="state-counts" aria-label="戰法狀態計數">
           {stateCodes.map((state) => (
             <button
               key={state}
@@ -239,6 +245,7 @@ export function WatchlistPage() {
             </button>
           ))}
         </div>
+        <p className="muted"><small>依戰法計算，同一檔可重複</small></p>
         <div className="filter-bar">
           <label className="field">
             評估結果

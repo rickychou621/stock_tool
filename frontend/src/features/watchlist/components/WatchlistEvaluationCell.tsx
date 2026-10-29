@@ -19,6 +19,18 @@ export function WatchlistEvaluationCell({
   error,
   onEvaluate,
 }: Props) {
+  const dataDate = results
+    .map((r) => r.result.dataDate)
+    .filter((d): d is string => !!d)
+    .sort()
+    .at(-1)
+  const staleResults = results.filter((r) => r.marketDataStale)
+  const staleTitle = staleResults
+    .map(
+      (r) =>
+        `最後行情 ${r.result.dataDate ?? '無資料'}，最近交易日 ${r.expectedDataDate ?? '無資料'}`,
+    )
+    .join('；')
   const upperBandMarks = [
     ...new Set(
       results
@@ -42,6 +54,14 @@ export function WatchlistEvaluationCell({
       </div>
       {busy && <span role="status">更新行情並評估中…</span>}
       {!results.length && <span className="muted">尚未評估</span>}
+      {dataDate && (
+        <p title={staleTitle || undefined}>
+          <span className={staleResults.length ? 'stale-notice' : undefined}>
+            行情 {dataDate.slice(5).replace('-', '/')}
+          </span>
+          {!!staleResults.length && <span className="status-badge status-warning">行情過期</span>}
+        </p>
+      )}
       <div className="rule-state-list">
         {results.map((r) => (
           <div className="rule-state-item" key={r.ruleId}>
@@ -49,7 +69,10 @@ export function WatchlistEvaluationCell({
             {r.state === 'STALE' ? (
               <p className="stale-notice">行情或戰法已更新，請重新評估</p>
             ) : r.result.state ? (
-              <RuleStateLine state={{ ...r.result.state, state: r.state }} />
+              <RuleStateLine
+                state={{ ...r.result.state, state: r.state }}
+                dataDate={r.result.dataDate}
+              />
             ) : (
               <p className="muted">{STATE_LABELS[r.state]}：尚無狀態說明</p>
             )}

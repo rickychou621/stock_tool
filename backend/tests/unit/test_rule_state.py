@@ -268,3 +268,31 @@ def test_hold_reason_includes_only_failed_entries_after_all_premises():
     )
     state = classify(strategy, "TEST", bars())
     assert (state.state, state.reason) == (HOLD, "premise reason｜premise reason｜entry reason")
+
+
+@pytest.mark.parametrize("sufficient", [False, True])
+def test_missing_reasons_are_unique_in_original_order(sufficient):
+    from app.rules.state import _missing_reason
+
+    result = SimpleNamespace(condition_results=[
+        SimpleNamespace(reason=reason, data_sufficient=sufficient, is_met=False)
+        for reason in ("原因甲", "原因甲", "原因乙", "原因甲")
+    ])
+    assert _missing_reason(result) == "原因甲；原因乙"
+
+
+def test_missing_reason_keeps_largest_requirement_per_timeframe():
+    from app.rules.state import _missing_reason
+
+    reasons = (
+        "月 K 資料不足：需要 26 根，目前 7 根",
+        "月 K 資料不足：需要 10 根，目前 7 根",
+        "日 K 資料不足：需要 25 根，目前 7 根",
+        "月 K 資料不足：需要 10 根，目前 7 根",
+    )
+    result = SimpleNamespace(condition_results=[
+        SimpleNamespace(reason=reason, data_sufficient=False, is_met=False) for reason in reasons
+    ])
+    assert _missing_reason(result) == (
+        "月 K 資料不足：需要 26 根，目前 7 根；日 K 資料不足：需要 25 根，目前 7 根"
+    )

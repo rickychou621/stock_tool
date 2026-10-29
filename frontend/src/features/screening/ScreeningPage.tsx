@@ -1,3 +1,4 @@
+import { formatTaipeiTime } from '../../lib/time'
 import { ETF_CATEGORY_LABELS } from '../settings/etfCategories'
 import { RuleStateBadge } from '../rules/components/RuleStateBadge'
 import { PageHeader } from '../../components/PageHeader'
@@ -10,7 +11,7 @@ import { useEffect, useState } from 'react'
 import { STATE_LABELS, STATE_URGENCY, type RuleStateCode } from '../rules/state'
 import type { ScanJob, ScanSummary, TodayMatchItem, NotificationSummary } from './types'
 
-const FILTER_STATES: RuleStateCode[] = ['ENTRY', 'EXIT', 'NEAR_EXIT', 'HOLD', 'STALE']
+const FILTER_STATES: RuleStateCode[] = ['ENTRY', 'NEAR_EXIT', 'HOLD', 'STALE']
 
 export function ScreeningPage() {
   const [selectedStates, setSelectedStates] = useState<RuleStateCode[]>(['ENTRY'])
@@ -178,6 +179,12 @@ export function ScreeningPage() {
       {scan && (
         <div className="card">
           <h3>本次掃描結果</h3>
+          <p className="muted">
+            基準日 {scan.baselineDate ?? '—'}・掃描時間 {formatTaipeiTime(scan.finishedAt).replace(/^\d{4}\//, '')}
+          </p>
+          <p className="muted">
+            進場定義：今天符合且前一個有效交易日不符合，與全市場掃描相同。差異：本頁只檢查已同步行情的 {scan.stocksScanned} 檔；全市場掃描涵蓋上市櫃全部標的。行情過期的股票本頁列為「行情過期」，不算進場。
+          </p>
           <div className="overview-grid">
             <div className="overview-tile">
               <span>已檢查股票</span>
@@ -190,13 +197,6 @@ export function ScreeningPage() {
               <span>進場訊號</span>
               <strong>
                 {stockCount('ENTRY')}
-                <small> 檔</small>
-              </strong>
-            </div>
-            <div className="overview-tile">
-              <span>出場訊號</span>
-              <strong>
-                {stockCount('EXIT')}
                 <small> 檔</small>
               </strong>
             </div>
@@ -219,6 +219,7 @@ export function ScreeningPage() {
               </button>
             ))}
           </div>
+          <p className="muted"><small>篩選數字依戰法計算（筆），同一檔可重複</small></p>
           {visibleMatches.length === 0 ? (
             <p>{matches.length === 0 ? '本次沒有符合戰法的股票。' : '所選狀態沒有符合的股票。'}</p>
           ) : (
@@ -247,12 +248,12 @@ export function ScreeningPage() {
                         </Link>
                       </td>
                       <td>
-                        {item.state === 'STALE' ? (
-                          <span className="state-badge state-badge--stale" title="行情過期">
-                            {item.ruleName} 行情過期
-                          </span>
-                        ) : item.state ? (
-                          <RuleStateBadge ruleName={item.ruleName} state={item.state} />
+                        {item.state ? (
+                          <RuleStateBadge
+                            ruleName={item.ruleName}
+                            state={item.state}
+                            label={item.state === 'STALE' ? '行情過期' : undefined}
+                          />
                         ) : (
                           item.ruleName
                         )}
