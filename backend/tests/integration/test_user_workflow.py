@@ -4,7 +4,7 @@ from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import BigInteger, Integer, MetaData, create_engine, select
+from sqlalchemy import BigInteger, Integer, MetaData, create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -522,3 +522,115 @@ def test_chart_date_range_caps_at_1000_and_uses_adjusted_prices(context):
     assert len(bars) == 1000
     assert bars[0] == dict(date="2000-01-01", open=10, high=12, low=9, close=11, volume=1000)
     assert bars[-1]["date"] == (start + timedelta(days=999)).isoformat()
+
+
+def test_screening_stale_entry_has_no_alert(context):
+    client, db, rule_id, sent = context
+    # Use a real ENTRY first, then advance another stock's daily quote.
+    current = run_scan(client)
+    assert current["matches"][0]["state"] == "ENTRY"
+    alert = db.scalar(select(AlertLog))
+    original_message = alert.message
+    db.query(AlertLog).delete()
+    latest = db.scalar(select(StockPriceDaily).where(
+        StockPriceDaily.ticker == "2330"
+    ).order_by(StockPriceDaily.trade_date.desc()))
+    old_day = latest.trade_date
+    new_day = old_day + timedelta(days=1)
+    db.add(StockPriceDaily(ticker="2454", trade_date=new_day,
+                          open=100, high=100, low=100, close=100, volume=1000))
+    db.commit()
+    stale = run_scan(client)
+    match = next(m for m in stale["matches"] if m["ticker"] == "2330")
+    assert match["state"] == "STALE"
+    assert match["id"] is None
+    assert match["reason"] == f"行情過期：最後行情 {old_day}，最近交易日 {new_day}"
+    assert stale["newAlerts"] == 0
+    assert list(db.scalars(select(AlertLog))) == []
+    assert sent == []
+    # A pre-existing alert must not be updated by a stale evaluation.
+    db.add(AlertLog(rule_id=rule_id, ticker="2330", message=original_message,
+                    is_notified=False, state="ENTRY"))
+    db.commit()
+    assert run_scan(client)["matches"][0]["id"] is None
+    db.expire_all()
+    assert db.scalar(select(AlertLog)).message == original_message
+
+
+def test_etf_exclusion_settings_and_futures_screening(context, monkeypatch):
+    from app.core.config import get_settings
+    from app.market_scan.models import MarketInstrument, ScanSettings
+
+    client, db, _, _ = context
+    monkeypatch.setattr(get_settings(), "screening_excluded_etf_categories", "futures")
+    db.add(Stock(ticker="00682U", name="期元大美元指數", market="上市"))
+    db.flush()
+    db.add(MarketInstrument(ticker="00682U", kind="etf", etf_category="futures",
+                            listed_on=date(2000, 1, 1)))
+    for bar in list(db.scalars(select(StockPriceDaily).where(StockPriceDaily.ticker == "2330"))):
+        db.add(StockPriceDaily(ticker="00682U", trade_date=bar.trade_date,
+                              open=bar.open, high=bar.high, low=bar.low,
+                              close=bar.close, volume=bar.volume))
+    db.add(ScanSettings(id=1, excluded_etf_categories=None))
+    db.commit()
+    assert client.get("/settings").json()["excludedEtfCategories"] == ["futures"]
+    result = run_scan(client)
+    assert result["excludedCategories"] == ["futures"]
+    assert "00682U" not in [m["ticker"] for m in result["matches"]]
+    for invalid in (["equity"], ["unknown"], ["futures", "stock"]):
+        response = client.put("/settings/etf-exclusion", json={"categories": invalid})
+        assert response.status_code == 422
+    assert client.put("/settings/etf-exclusion", json={"categories": []}).status_code == 200
+    assert client.get("/settings").json()["excludedEtfCategories"] == []
+    assert "00682U" in [m["ticker"] for m in run_scan(client)["matches"]]
+    assert client.put("/settings/etf-exclusion", json={"categories": ["bond"]}).status_code == 200
+    assert client.get("/settings").json()["excludedEtfCategories"] == ["bond"]
+
+
+@pytest.mark.parametrize("state", ["ENTRY", "HOLD", "NEAR_EXIT", "EXIT"])
+def test_screening_all_match_states_use_daily_quote_date(context, monkeypatch, state):
+    from types import SimpleNamespace
+
+    from app.screening import scan_service
+
+    _, db, rule_id, _ = context
+    latest = db.scalar(select(StockPriceDaily.trade_date).order_by(
+        StockPriceDaily.trade_date.desc()))
+    old = latest - timedelta(days=11)
+    monkeypatch.setattr(scan_service, "evaluate_with_state", lambda *args, **kwargs: (
+        SimpleNamespace(status="ok", data_date=old, condition_results=[]),
+        SimpleNamespace(state=state, reason="符合"),
+    ))
+    summary = scan_service.ScreeningScanService(db).run_scan()
+    assert len(summary.matches) == 3
+    assert all(m.state == "STALE" and m.id is None for m in summary.matches)
+    assert all(str(old) in m.reason and str(latest) in m.reason for m in summary.matches)
+    assert summary.new_alerts == 0
+
+
+
+def test_screening_weekly_rule_uses_last_friday_as_fresh(context, monkeypatch):
+    client, db, rule_id, sent = context
+    from types import SimpleNamespace
+
+    from app.rules.state import RuleState
+    from app.screening import scan_service
+
+    latest = db.scalar(select(func.max(StockPriceDaily.trade_date)))
+    friday = latest - timedelta(days=(latest.weekday() - 4) % 7)
+    db.query(StockPriceDaily).filter(StockPriceDaily.trade_date > friday).delete()
+    db.get(WatchRule, rule_id).evaluation_frequency = "weekly"
+    # Newer non-Friday quotes exist, but weekly rules are still judged on that Friday.
+    for offset in (3, 4):
+        db.add(StockPriceDaily(ticker="2454", trade_date=friday + timedelta(days=offset),
+                              open=100, high=100, low=100, close=100, volume=1000))
+    db.commit()
+    for data_date, expected in ((friday, "ENTRY"), (friday - timedelta(days=7), "STALE")):
+        monkeypatch.setattr(scan_service, "evaluate_with_state", lambda *a, d=data_date, **k: (
+            SimpleNamespace(status="matched", data_date=d, condition_results=[]),
+            RuleState("ENTRY", "ok", None, None, None),
+        ))
+        db.query(AlertLog).delete()
+        db.commit()
+        states = {m["state"] for m in run_scan(client)["matches"] if m["ticker"] == "2330"}
+        assert states == {expected}

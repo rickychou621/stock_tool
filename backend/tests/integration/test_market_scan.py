@@ -1273,3 +1273,36 @@ def test_weekly_scan_without_sufficient_previous_friday(start):
     assert outcome.rules[1][0] == "insufficient_history"
     assert outcome.candidates == []
     assert outcome.continuing == 0
+
+
+def test_excluded_etf_keeps_quotes_but_removes_candidates(factory):
+    job = manager(factory)
+    job.start(now=NOW)
+    job.close()
+    with factory() as db:
+        assert db.scalar(select(ScanCandidate).where(ScanCandidate.ticker == "2"))
+        db.get(MarketInstrument, "2").etf_category = "futures"
+        db.get(MarketInstrument, "2").kind = "etf"
+        db.get(ScanSettings, 1).excluded_etf_categories = ["futures"]
+        db.commit()
+    prepared, evaluated = [], []
+
+    def prepare(factory, instruments, *args, **kwargs):
+        prepared.extend(item[0] for item in instruments)
+        return [], []
+
+    def worker(factory, item, rules, *args):
+        evaluated.append(item[0])
+        return success(factory, item, rules, *args)
+
+    job = manager(factory, worker=worker)
+    job.batch_prepare = prepare
+    job.start(now=NOW)
+    job.close()
+    assert prepared == ["1", "2"]
+    assert evaluated == ["1"]
+    with factory() as db:
+        task = db.get(ScanTask, "scan")
+        assert task.total == task.processed == 1
+        assert "已排除 1 檔 ETF（期貨）" in task.warnings
+        assert db.scalar(select(ScanCandidate).where(ScanCandidate.ticker == "2")) is None

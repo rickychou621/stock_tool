@@ -985,3 +985,6 @@ details li + li {
 .rule-parameter-form fieldset { margin-bottom: 1rem; }
 .rule-parameter-form .status-badge { align-self: flex-start; width: fit-content; }
 .rule-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+.etf-exclusion-options { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; margin-bottom: 1rem; }
+.etf-exclusion-options label { display: inline-flex; align-items: center; gap: 0.35rem; }

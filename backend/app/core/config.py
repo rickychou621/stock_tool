@@ -41,7 +41,7 @@ class Settings(BaseSettings):
 
     near_exit_pct: float = Field(default=0.03, gt=0, lt=1, allow_inf_nan=False)
 
-    screening_excluded_etf_categories: str = "leveraged,inverse,bond"
+    screening_excluded_etf_categories: str = "leveraged,inverse,bond,futures"
 
     @property
     def excluded_etf_categories(self) -> set[str]:

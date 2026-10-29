@@ -2,18 +2,28 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.alerts.models import AlertLog
 from app.alerts.repository import AlertRepository
-from app.core.config import get_settings
+from app.market_data.models import StockPriceDaily
 from app.market_data.repository import MarketDataRepository
 from app.market_scan.models import MarketInstrument
+from app.market_scan.service import excluded_etf_categories
+from app.rules.frequency import last_evaluation_day
 from app.rules.repository import RuleRepository
-from app.rules.state import ENTRY, EXIT, HOLD, NEAR_EXIT, evaluate_with_state, instrument_kind
+from app.rules.state import (
+    ENTRY,
+    EXIT,
+    HOLD,
+    NEAR_EXIT,
+    STALE,
+    evaluate_with_state,
+    instrument_kind,
+)
 
 
 @dataclass
@@ -45,6 +55,7 @@ class ScanSummary:
     excluded: int
     matches: list[ScanMatch] = field(default_factory=list)
     issues: list[ScanIssue] = field(default_factory=list)
+    excluded_categories: list[str] = field(default_factory=list)
 
 
 class ScreeningScanService:
@@ -57,12 +68,18 @@ class ScreeningScanService:
     def run_scan(self, progress: Callable[[int, int], None] | None = None) -> ScanSummary:
         rules = self._rule_repository.list_enabled()
         tickers = self._market_data_repository.list_chartable_tickers()
-        categories = get_settings().excluded_etf_categories
+        latest_date = self._db.scalar(select(func.max(StockPriceDaily.trade_date)))
+        trading_days = list(self._db.scalars(
+            select(StockPriceDaily.trade_date).distinct()
+            .where(StockPriceDaily.trade_date >= latest_date - timedelta(days=21))
+        )) if latest_date else []
+        categories = excluded_etf_categories(self._db)
         excluded_tickers = set(self._db.scalars(
             select(MarketInstrument.ticker).where(MarketInstrument.etf_category.in_(categories))
         )) if categories else set()
         scan_tickers = [ticker for ticker in tickers if ticker not in excluded_tickers]
         summary = ScanSummary(len(rules), len(scan_tickers), 0, len(tickers) - len(scan_tickers))
+        summary.excluded_categories = sorted(categories)
         tickers = scan_tickers
         names = self._market_data_repository.get_names(tickers)
         if progress:
@@ -88,6 +105,15 @@ class ScreeningScanService:
                     )
                 if state.state not in (ENTRY, HOLD, NEAR_EXIT, EXIT):
                     continue
+                # Weekly rules are judged on the last Friday, not on the latest trading day.
+                expected = latest_date and last_evaluation_day(
+                    latest_date, trading_days, rule.evaluation_frequency
+                )
+                if result.data_date is not None and expected and result.data_date < expected:
+                    state.state = STALE
+                    state.reason = (
+                        f"行情過期：最後行情 {result.data_date}，最近交易日 {expected}"
+                    )
                 latest_bar = self._market_data_repository.get_latest_bar(ticker)
                 price = None
                 if latest_bar:

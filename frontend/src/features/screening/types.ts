@@ -20,6 +20,7 @@ export interface TodayMatchItem {
 export interface ScanSummary {
   rulesEvaluated: number
   excluded: number
+  excludedCategories: string[]
   stocksScanned: number
   newAlerts: number
   matches: ScanMatch[]

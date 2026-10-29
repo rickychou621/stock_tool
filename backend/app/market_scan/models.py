@@ -36,6 +36,7 @@ class ScanSettings(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     rule_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    excluded_etf_categories: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     last_attempt_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
 

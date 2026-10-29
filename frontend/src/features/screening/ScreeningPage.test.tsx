@@ -8,7 +8,7 @@ import { ScreeningPage } from './ScreeningPage'
 import type { ScanJob, ScanSummary } from './types'
 
 const summary: ScanSummary = {
-  rulesEvaluated: 1, stocksScanned: 2, newAlerts: 1, excluded: 0, issues: [],
+  rulesEvaluated: 1, stocksScanned: 2, newAlerts: 1, excluded: 0, excludedCategories: [], issues: [],
   matches: [{
     id: 1, ticker: '2330', name: '台積電', ruleName: '戰法', state: 'ENTRY',
     priceAtTrigger: 100, dataDate: '2026-10-22', isNotified: false,
@@ -85,5 +85,26 @@ it('顯示重複啟動時後端回傳的錯誤訊息', async () => {
   )
   fireEvent.click(screen.getByRole('button', { name: '立即掃描' }))
   await screen.findByText('已有掃描進行中，請等待完成。')
+  client.clear()
+})
+
+it('行情過期可篩選且不通知，排除文字依實際類別顯示', async () => {
+  const { client } = setup({
+    jobId: 'stale', status: 'done', done: 1, total: 1, error: null,
+    summary: {
+      ...summary, excluded: 3, excludedCategories: ['futures', 'bond'],
+      matches: [{ ...summary.matches[0], id: null, state: 'STALE', reason: '行情過期原因' }],
+    },
+  })
+  const filter = await screen.findByRole('button', { name: '行情過期 1' })
+  expect(filter.getAttribute('aria-pressed')).toBe('false')
+  expect(screen.queryByText('行情過期原因')).toBeNull()
+  expect(screen.getByRole('button', { name: '進場 0' })).toBeTruthy()
+  expect((screen.getByRole('button', { name: '通知 Telegram（0 檔）' }) as HTMLButtonElement).disabled)
+    .toBe(true)
+  expect(screen.getByText(/已排除 3 檔債券／期貨ETF/)).toBeTruthy()
+  fireEvent.click(filter)
+  expect(screen.getByText('戰法 行情過期')).toBeTruthy()
+  expect(screen.getByText('行情過期原因')).toBeTruthy()
   client.clear()
 })

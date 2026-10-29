@@ -9,7 +9,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import Session, selectinload
 
 from app.backtest.data import load_trading_dates
 from app.core.config import get_settings
@@ -18,7 +18,15 @@ from app.data_source.notifier import TelegramNotifier
 from app.market_scan.batch_data import synchronize
 from app.market_scan.coordination import acquire
 from app.market_scan.data import required_days
-from app.market_scan.models import ScanCandidate, ScanError, ScanPublication, ScanSettings, ScanTask
+from app.market_scan.models import (
+    CandidateIndicator,
+    MarketInstrument,
+    ScanCandidate,
+    ScanError,
+    ScanPublication,
+    ScanSettings,
+    ScanTask,
+)
 from app.market_scan.notification import messages
 from app.market_scan.publication import publish
 from app.market_scan.rate_limit import RateLimiter
@@ -48,6 +56,16 @@ def settings_row(db):
         db.add(row)
         db.commit()
     return row
+
+
+ETF_CATEGORY_LABELS = {"leveraged": "槓桿", "inverse": "反向", "bond": "債券", "futures": "期貨"}
+
+
+def excluded_etf_categories(db: Session) -> set[str]:
+    row = db.get(ScanSettings, 1)
+    if row is not None and row.excluded_etf_categories is not None:
+        return set(row.excluded_etf_categories)
+    return get_settings().excluded_etf_categories
 
 
 def chosen_rules(db, ids=None):
@@ -197,7 +215,16 @@ class MarketScanManager:
                 # Refresh for initialization, automatic scans and manual scans as well.
                 instruments, warning = self.universe(db, cutoff)
                 task = db.get(ScanTask, kind)
-                task.total, task.baseline = len(instruments), dates[-1]
+                categories = excluded_etf_categories(db) if kind == "scan" else set()
+                excluded = set(db.scalars(select(MarketInstrument.ticker).where(
+                    MarketInstrument.etf_category.in_(categories)
+                ))) if categories else set()
+                evaluation_instruments = [item for item in instruments if item[0] not in excluded]
+                task.total, task.baseline = len(evaluation_instruments), dates[-1]
+                if categories:
+                    labels = "、".join(v for k, v in ETF_CATEGORY_LABELS.items() if k in categories)
+                    count = len(instruments) - len(evaluation_instruments)
+                    task.warnings = [*task.warnings, f"已排除 {count} 檔 ETF（{labels}）"]
                 if warning:
                     task.warnings = [*task.warnings, warning]
                 db.commit()
@@ -247,7 +274,7 @@ class MarketScanManager:
                     pool.submit(
                         self.worker, self.factory, item, rules, kind, dates, self.limiter
                     ): item[0]
-                    for item in instruments
+                    for item in evaluation_instruments
                 }
                 for future in as_completed(futures):
                     ticker = futures[future]
@@ -306,6 +333,12 @@ class MarketScanManager:
                         insufficient=task.insufficient,
                         warnings=task.warnings,
                     )
+                    if excluded:
+                        removed = select(ScanCandidate.id).where(ScanCandidate.ticker.in_(excluded))
+                        db.execute(delete(CandidateIndicator).where(
+                            CandidateIndicator.candidate_id.in_(removed)
+                        ))
+                        db.execute(delete(ScanCandidate).where(ScanCandidate.ticker.in_(excluded)))
                     publish(db, batch_id, outcomes, metadata)
                     try:
                         backfill(self.factory, dates[-1], lease.verify)

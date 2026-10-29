@@ -36,6 +36,7 @@ class ScanSummarySchema(CamelModel):
     stocks_scanned: int
     new_alerts: int
     excluded: int
+    excluded_categories: list[str] = []
     matches: list[ScanMatchSchema]
     issues: list[ScanIssueSchema]
 

@@ -1,12 +1,15 @@
+import { useState } from 'react'
+import { ETF_CATEGORY_LABELS } from './etfCategories'
 import { Link } from 'react-router-dom'
 import { PageHeader } from '../../components/PageHeader'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '../../api/client'
 
 interface SettingsSummary {
   screeningIntervalMinutes: number
   candidatePoolLimit: number
   telegramConfigured: boolean
+  excludedEtfCategories: string[]
 }
 
 interface TestTelegramResult {
@@ -15,9 +18,17 @@ interface TestTelegramResult {
 }
 
 export function SettingsPage() {
+  const queryClient = useQueryClient()
+  const [selected, setSelected] = useState<string[] | null>(null)
   const { data, isLoading, isError } = useQuery({
     queryKey: ['settings'],
     queryFn: () => apiClient.get<SettingsSummary>('/settings'),
+  })
+
+  const categories = selected ?? data?.excludedEtfCategories ?? []
+  const saveExclusion = useMutation({
+    mutationFn: () => apiClient.put('/settings/etf-exclusion', { categories }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['settings'] }),
   })
 
   const testTelegram = useMutation({
@@ -55,8 +66,51 @@ export function SettingsPage() {
           </div>
         )}
         <p className="muted">
-          此頁僅供查看。每日自動更新請至<Link to="/">觀察清單</Link>設定；候選池定時更新尚未啟用。
+          每日自動更新請至<Link to="/">觀察清單</Link>設定；候選池定時更新尚未啟用。
         </p>
+      </div>
+
+      <div className="card">
+        <h3>排除的 ETF 類別</h3>
+        <p className="muted">勾選的類別不會出現在今日符合戰法清單與全市場掃描結果。</p>
+        <div className="etf-exclusion-options">
+          {Object.entries(ETF_CATEGORY_LABELS).map(([category, label]) => (
+            <label key={category}>
+              <input
+                type="checkbox"
+                checked={categories.includes(category)}
+                disabled={!data || saveExclusion.isPending}
+                onChange={(event) => {
+                  saveExclusion.reset()
+                  setSelected(
+                    event.target.checked
+                      ? [...categories, category]
+                      : categories.filter((value) => value !== category),
+                  )
+                }}
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+        <button
+          className="button-primary"
+          type="button"
+          disabled={!data || saveExclusion.isPending}
+          onClick={() => saveExclusion.mutate()}
+        >
+          {saveExclusion.isPending ? '儲存中...' : '儲存'}
+        </button>
+        {saveExclusion.isSuccess && (
+          <p className="success-text" role="status">
+            已儲存
+          </p>
+        )}
+        {saveExclusion.isError && (
+          <p className="error-text" role="alert">
+            儲存失敗，請重試。
+          </p>
+        )}
       </div>
 
       <div className="card">

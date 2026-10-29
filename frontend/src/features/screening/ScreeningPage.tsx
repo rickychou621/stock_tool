@@ -1,3 +1,4 @@
+import { ETF_CATEGORY_LABELS } from '../settings/etfCategories'
 import { RuleStateBadge } from '../rules/components/RuleStateBadge'
 import { PageHeader } from '../../components/PageHeader'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -9,7 +10,7 @@ import { useEffect, useState } from 'react'
 import { STATE_LABELS, STATE_URGENCY, type RuleStateCode } from '../rules/state'
 import type { ScanJob, ScanSummary, TodayMatchItem, NotificationSummary } from './types'
 
-const FILTER_STATES: RuleStateCode[] = ['ENTRY', 'EXIT', 'NEAR_EXIT', 'HOLD']
+const FILTER_STATES: RuleStateCode[] = ['ENTRY', 'EXIT', 'NEAR_EXIT', 'HOLD', 'STALE']
 
 export function ScreeningPage() {
   const [selectedStates, setSelectedStates] = useState<RuleStateCode[]>(['ENTRY'])
@@ -202,7 +203,9 @@ export function ScreeningPage() {
           </div>
           <p>
             檢查 {scan.stocksScanned} 檔 × {scan.rulesEvaluated} 條戰法，已排除{' '}
-            {scan.excluded} 檔反向／槓桿／債券 ETF。
+            {scan.excluded} 檔{Object.entries(ETF_CATEGORY_LABELS)
+              .filter(([key]) => scan.excludedCategories?.includes(key))
+              .map(([, label]) => label).join('／')}ETF。
           </p>
           <div className="state-counts" aria-label="掃描結果狀態篩選">
             {FILTER_STATES.map((state) => (
@@ -212,7 +215,7 @@ export function ScreeningPage() {
                 aria-pressed={selectedStates.includes(state)}
                 onClick={() => toggleState(state)}
               >
-                {STATE_LABELS[state]} {counts[state]}
+                {state === 'STALE' ? '行情過期' : STATE_LABELS[state]} {counts[state]}
               </button>
             ))}
           </div>
@@ -244,7 +247,11 @@ export function ScreeningPage() {
                         </Link>
                       </td>
                       <td>
-                        {item.state ? (
+                        {item.state === 'STALE' ? (
+                          <span className="state-badge state-badge--stale" title="行情過期">
+                            {item.ruleName} 行情過期
+                          </span>
+                        ) : item.state ? (
                           <RuleStateBadge ruleName={item.ruleName} state={item.state} />
                         ) : (
                           item.ruleName
