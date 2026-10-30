@@ -1,3 +1,5 @@
+import { useStopDistanceThreshold } from '../../rules/useStopDistanceThreshold'
+import { isLargeStopDistance } from '../../rules/ruleMetrics'
 import { formatDataDate, WEEKLY_DATA_DATE_TITLE } from '../../rules/dataDate'
 import { formatTaipeiTime } from '../../../lib/time'
 import type { SavedEvaluation } from '../types'
@@ -14,6 +16,7 @@ export function WatchlistEvaluationCell({
   busy,
   error,
 }: Props) {
+  const stopDistanceThreshold = useStopDistanceThreshold()
   const dailyResults = results.filter((r) => r.evaluationFrequency !== 'weekly')
   const dateResults = dailyResults.length ? dailyResults : results
   const dateFrequency = dailyResults.length ? 'daily' : 'weekly'
@@ -47,7 +50,7 @@ export function WatchlistEvaluationCell({
         {results.map((r) => (
           <div className="rule-state-item" key={r.ruleId}>
             <RuleStateBadge ruleName={r.ruleName} state={r.state} />
-            {r.result.state?.largeStopDistance && (
+            {r.state === 'ENTRY' && isLargeStopDistance(r.result.state?.stopDistancePct, stopDistanceThreshold) && (
               <span className="status-badge status-warning">停損距離大</span>
             )}
             {r.state === 'STALE' ? (

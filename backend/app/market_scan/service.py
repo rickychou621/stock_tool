@@ -68,6 +68,13 @@ def excluded_etf_categories(db: Session) -> set[str]:
     return get_settings().excluded_etf_categories
 
 
+def large_stop_distance_pct(db: Session) -> float:
+    row = db.get(ScanSettings, 1)
+    if row is not None and row.large_stop_distance_pct is not None:
+        return row.large_stop_distance_pct
+    return get_settings().large_stop_distance_pct
+
+
 def chosen_rules(db, ids=None):
     query = (
         select(WatchRule)

@@ -3,8 +3,13 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.dependencies import get_db
-from app.market_scan.service import excluded_etf_categories, settings_row
-from app.settings.schemas import EtfExclusionSchema, SettingsSummarySchema, TestTelegramResultSchema
+from app.market_scan.service import excluded_etf_categories, large_stop_distance_pct, settings_row
+from app.settings.schemas import (
+    EtfExclusionSchema,
+    SettingsSummarySchema,
+    StopDistanceSchema,
+    TestTelegramResultSchema,
+)
 from app.settings.service import SettingsService
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -21,7 +26,8 @@ def read_settings(
 ) -> SettingsSummarySchema:
     return SettingsSummarySchema(
         **service.get_settings_summary(),
-        excluded_etf_categories=sorted(excluded_etf_categories(db))
+        excluded_etf_categories=sorted(excluded_etf_categories(db)),
+        large_stop_distance_pct=large_stop_distance_pct(db),
     )
 
 
@@ -39,3 +45,11 @@ def update_etf_exclusion(body: EtfExclusionSchema, db: Session = Depends(get_db)
     row.excluded_etf_categories = sorted(set(body.categories))
     db.commit()
     return EtfExclusionSchema(categories=row.excluded_etf_categories)
+
+
+@router.put("/stop-distance", response_model=StopDistanceSchema)
+def update_stop_distance(body: StopDistanceSchema, db: Session = Depends(get_db)):
+    row = settings_row(db)
+    row.large_stop_distance_pct = body.large_stop_distance_pct
+    db.commit()
+    return StopDistanceSchema(large_stop_distance_pct=row.large_stop_distance_pct)

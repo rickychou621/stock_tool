@@ -8,6 +8,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '../../api/client'
 
 interface SettingsSummary {
+  largeStopDistancePct: number
   screeningIntervalMinutes: number
   candidatePoolLimit: number
   telegramConfigured: boolean
@@ -25,6 +26,15 @@ export function SettingsPage() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['settings'],
     queryFn: () => apiClient.get<SettingsSummary>('/settings'),
+  })
+
+  const [stopThreshold, setStopThreshold] = useState<string | null>(null)
+  const threshold = stopThreshold ?? String(Number(((data?.largeStopDistancePct ?? 0.07) * 100).toFixed(4)))
+  const saveStopDistance = useMutation({
+    mutationFn: () => apiClient.put('/settings/stop-distance', {
+      largeStopDistancePct: Number(threshold) / 100,
+    }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['settings'] }),
   })
 
   const categories = selected ?? data?.excludedEtfCategories ?? []
@@ -114,6 +124,31 @@ export function SettingsPage() {
             儲存失敗，請重試。
           </p>
         )}
+      </div>
+
+      <div className="card">
+        <h3>停損距離警示門檻</h3>
+        <p className="muted">進場時，觸價距現價超過此比例會標示『停損距離大』。只影響顯示，不影響判定。</p>
+        <form onSubmit={(event) => { event.preventDefault(); saveStopDistance.mutate() }}>
+          <label>
+            停損距離警示門檻（%）
+            <input
+              type="number" step="0.5" min="0.5" max="50" required
+              value={threshold}
+              disabled={!data || saveStopDistance.isPending}
+              onChange={(event) => {
+                saveStopDistance.reset()
+                setStopThreshold(event.target.value)
+              }}
+            />
+          </label>
+          <button className="button-primary" type="submit" disabled={!data || saveStopDistance.isPending}>
+            <FontAwesomeIcon icon={faFloppyDisk} />
+            {saveStopDistance.isPending ? '儲存中...' : '儲存'}
+          </button>
+        </form>
+        {saveStopDistance.isSuccess && <p className="success-text" role="status">已儲存</p>}
+        {saveStopDistance.isError && <p className="error-text" role="alert">儲存失敗，請重試。</p>}
       </div>
 
       <div className="card">

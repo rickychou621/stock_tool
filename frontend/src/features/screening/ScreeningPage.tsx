@@ -9,7 +9,8 @@ import {
 } from '@fortawesome/free-solid-svg-icons'
 import { formatTaipeiTime } from '../../lib/time'
 import { ETF_CATEGORY_LABELS } from '../settings/etfCategories'
-import { formatRuleMetrics } from '../rules/ruleMetrics'
+import { useStopDistanceThreshold } from '../rules/useStopDistanceThreshold'
+import { formatRuleMetrics, isLargeStopDistance } from '../rules/ruleMetrics'
 import { RuleStateBadge } from '../rules/components/RuleStateBadge'
 import { PageHeader } from '../../components/PageHeader'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -27,6 +28,7 @@ import { getSyncHint } from './syncHint'
 const FILTER_STATES: RuleStateCode[] = ['ENTRY', 'STALE']
 
 export function ScreeningPage() {
+  const stopDistanceThreshold = useStopDistanceThreshold()
   const [selectedStates, setSelectedStates] = useState<RuleStateCode[]>(['ENTRY'])
   const queryClient = useQueryClient()
   const todayMatches = useQuery({
@@ -301,7 +303,7 @@ export function ScreeningPage() {
                         ) : (
                           item.ruleName
                         )}
-                        {item.largeStopDistance && <span className="status-badge status-warning">停損距離大</span>}
+                        {item.state === 'ENTRY' && isLargeStopDistance(item.stopDistancePct, stopDistanceThreshold) && <span className="status-badge status-warning">停損距離大</span>}
                         {showWatchlist && watchId !== undefined && (
                           <p
                             className={differs ? 'status-warning' : 'muted'}

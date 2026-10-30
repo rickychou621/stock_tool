@@ -594,6 +594,18 @@ def test_etf_exclusion_settings_and_futures_screening(context, monkeypatch):
     assert client.get("/settings").json()["excludedEtfCategories"] == ["bond"]
 
 
+def test_large_stop_distance_setting_defaults_and_updates(context):
+    client, _, _, _ = context
+    assert client.get("/settings").json()["largeStopDistancePct"] == 0.07
+    for invalid in (0, 1, -0.1):
+        response = client.put("/settings/stop-distance", json={"largeStopDistancePct": invalid})
+        assert response.status_code == 422
+    response = client.put("/settings/stop-distance", json={"largeStopDistancePct": 0.08})
+    assert response.status_code == 200
+    assert response.json() == {"largeStopDistancePct": 0.08}
+    assert client.get("/settings").json()["largeStopDistancePct"] == 0.08
+
+
 @pytest.mark.parametrize("state", ["ENTRY", "HOLD", "NEAR_EXIT", "EXIT"])
 def test_screening_all_match_states_use_daily_quote_date(context, monkeypatch, state):
     from types import SimpleNamespace

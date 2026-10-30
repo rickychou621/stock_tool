@@ -194,7 +194,7 @@ it.each([
   client.clear()
 })
 
-it('快篩筆數與檔數一致，其他狀態用選單，顯示共用指標與警示', async () => {
+it('快篩筆數與檔數一致，其他狀態用選單，顯示共用指標，警示不讀後端欄位', async () => {
   const { client } = setup({
     latestMarketDate: null, jobId: 'metrics', status: 'done', done: 1, total: 1, error: null,
     summary: { ...summary, matches: [
@@ -208,7 +208,7 @@ it('快篩筆數與檔數一致，其他狀態用選單，顯示共用指標與�
   expect(screen.getByRole('button', { name: '行情過期 0 筆（0 檔）' })).toBeTruthy()
   expect(screen.queryByRole('button', { name: /^續抱|^接近出場/ })).toBeNull()
   expect(screen.getByText('距月線 +0.9%｜月線斜率 +0.64%／5 日｜停損距離 -2.1%')).toBeTruthy()
-  expect(screen.getByText('停損距離大')).toBeTruthy()
+  expect(screen.queryByText('停損距離大')).toBeNull()
   fireEvent.change(screen.getByRole('combobox', { name: '其他狀態' }), { target: { value: 'HOLD' } })
   expect(screen.getByRole('link', { name: /1104/ })).toBeTruthy()
   expect(screen.queryByRole('link', { name: /2330/ })).toBeNull()

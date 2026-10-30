@@ -56,8 +56,6 @@ export function RuleStateLine({
   dataDate?: string | null
   evaluationFrequency?: string
 }) {
-  const distance =
-    state.distancePct === null ? '—' : Number(state.distancePct.toFixed(1)).toFixed(1)
   const metrics = formatRuleMetrics(state)
   return (
     <p
@@ -68,7 +66,7 @@ export function RuleStateLine({
       {state.triggerPrice !== null && (
         <>
           （觸價 {state.triggerPrice}，現價 {state.close ?? '—'}
-          {dataDate && `（${evaluationFrequency === 'weekly' ? '月 K 計算至 ' : ''}${formatDataDate(dataDate, 'daily', 'MM/DD')}）`}，距離 {distance}%）
+          {dataDate && `（${evaluationFrequency === 'weekly' ? '月 K 計算至 ' : ''}${formatDataDate(dataDate, 'daily', 'MM/DD')}）`}）
         </>
       )}
       {metrics.length > 0 && `｜${metrics.join('｜')}`}

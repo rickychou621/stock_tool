@@ -10,7 +10,8 @@ import {
   faRotateLeft,
 } from '@fortawesome/free-solid-svg-icons'
 import { IconButton } from '../../components/IconButton'
-import { formatRuleMetrics } from '../rules/ruleMetrics'
+import { useStopDistanceThreshold } from '../rules/useStopDistanceThreshold'
+import { formatRuleMetrics, isLargeStopDistance } from '../rules/ruleMetrics'
 import { isPercentMetric, metricLabel, pickIndicators } from './indicators'
 import { Link } from 'react-router-dom'
 import { formatTaipeiTime } from '../../lib/time'
@@ -145,6 +146,7 @@ const initialFilters: Record<string, string> = {
   direction: 'asc',
 }
 export function MarketScanPage() {
+  const stopDistanceThreshold = useStopDistanceThreshold()
   const client = useQueryClient()
   const settings = useQuery({
     queryKey: ['market-settings'],
@@ -595,7 +597,9 @@ export function MarketScanPage() {
               {candidates.data?.items.map((row) => {
                 const { shown, hidden } = pickIndicators(row.indicators)
                 const pct = (key: string) => row.indicators[key] == null ? null : row.indicators[key]! * 100
+                const reason = row.reason.replace(/（[^）]*）/g, '')
                 const metrics = formatRuleMetrics({
+                  reason,
                   maDistancePct: pct('ma_touch_rebound.close_distance_pct'),
                   maSlopePct: pct('ma_rising.slope_pct'),
                   stopDistancePct: pct('protective_stop.stop_distance_pct'),
@@ -609,7 +613,7 @@ export function MarketScanPage() {
                       <small>{row.kind === 'etf' ? 'ETF' : '普通股'}</small>
                     </td>
                     <td>{row.ruleName}
-                      {Math.abs(row.indicators['protective_stop.stop_distance_pct'] ?? 0) > 0.07 && (
+                      {isLargeStopDistance(pct('protective_stop.stop_distance_pct'), stopDistanceThreshold) && (
                         <span className="status-badge status-warning">停損距離大</span>
                       )}
                     </td>
@@ -626,7 +630,7 @@ export function MarketScanPage() {
                       </small>
                     </td>
                     <td>
-                      <p title={row.reason}>{row.reason.replace(/（[^）]*）/g, '')}</p>
+                      <p title={row.reason}>{reason}</p>
                       {metrics.length > 0 && <p className="muted">{metrics.join('｜')}</p>}
                       <div className="market-indicators" title={hidden.map((item) => `${item.label} ${item.value}`).join('、')}>
                         {shown.filter(({ key }) => !['ma_touch_rebound.close_distance_pct', 'ma_rising.slope_pct', 'protective_stop.stop_distance_pct'].includes(key)).map(({ key, label, value }) => (

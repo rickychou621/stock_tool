@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, expect, it } from 'vitest'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { apiClient } from '../../../api/client'
 import { WatchlistEvaluationCell } from './WatchlistEvaluationCell'
 import { RuleStateBadge } from '../../rules/components/RuleStateBadge'
 import type { SavedEvaluation } from '../types'
 
-afterEach(cleanup)
+afterEach(() => { cleanup(); vi.restoreAllMocks() })
+beforeEach(() => { vi.spyOn(apiClient, 'get').mockResolvedValue({}) })
 const result: SavedEvaluation = {
   itemId: 1,
   ruleId: 2,
@@ -32,12 +35,14 @@ const result: SavedEvaluation = {
     },
   },
 }
-function show(results: SavedEvaluation[]) {
+function show(results: SavedEvaluation[], client = new QueryClient()) {
   return render(
-    <WatchlistEvaluationCell
-      results={results}
-      busy={false}
-    />,
+    <QueryClientProvider client={client}>
+      <WatchlistEvaluationCell
+        results={results}
+        busy={false}
+      />
+    </QueryClientProvider>,
   )
 }
 it('shows Chinese badges, dated prices and stale market warnings', () => {
@@ -92,14 +97,37 @@ it('行情摘要優先使用日頻日期，即使週頻日期較新', () => {
   expect(screen.queryByText('行情 10/30')).toBeNull()
 })
 
-it('顯示共用指標與停損距離警示', () => {
+it('顯示共用指標', () => {
   const { container } = show([{
     ...result,
     result: { ...result.result, state: {
-      ...result.result.state!, maDistancePct: 0.9, maSlopePct: 0.64,
-      stopDistancePct: -2.1, largeStopDistance: true,
+      ...result.result.state!, maDistancePct: 0.9, maSlopePct: 0.64, stopDistancePct: -2.1,
     } },
   }])
   expect(container.textContent).toContain('距月線 +0.9%｜月線斜率 +0.64%／5 日｜停損距離 -2.1%')
-  expect(screen.getByText('停損距離大').className).toBe('status-badge status-warning')
+})
+
+it.each([[-8.2, false], [-11, true]])('進場時依設定門檻顯示停損距離大 %s', async (stop, shown) => {
+  vi.spyOn(apiClient, 'get').mockResolvedValue({ largeStopDistancePct: 0.1 })
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  show([{
+    ...result,
+    state: 'ENTRY',
+    result: { ...result.result, state: {
+      ...result.result.state!, state: 'ENTRY', reason: '進場', stopDistancePct: stop,
+      largeStopDistance: !shown,
+    } },
+  }], client)
+  await waitFor(() => expect(client.getQueryData(['settings'])).toEqual({ largeStopDistancePct: 0.1 }))
+  expect(screen.queryByText('停損距離大') !== null).toBe(shown)
+  if (shown) expect(screen.getByText('停損距離大').className).toBe('status-badge status-warning')
+  client.clear()
+})
+
+it('非進場狀態不顯示停損距離大', () => {
+  show([{
+    ...result,
+    result: { ...result.result, state: { ...result.result.state!, stopDistancePct: -20 } },
+  }])
+  expect(screen.queryByText('停損距離大')).toBeNull()
 })

@@ -233,6 +233,20 @@ export function BacktestPage() {
   const staleInfo = report.data?.staleInfo
   const staleRuleIds = (staleInfo?.ruleIds ?? []).filter((id) => active.some((r) => r.id === id))
   const scopeDiff = report.data?.scopeDiff
+  const rerunRuleIds = scopeDiff ? ids : staleRuleIds
+  const scopeReason = scopeDiff
+    ? `觀察清單已變更（新增 ${scopeDiff.added.length} 檔、移除 ${scopeDiff.removed.length} 檔）`
+    : null
+  const staleReason = staleInfo?.reason === 'definition' && staleInfo.changedAt
+    ? `戰法定義已於 ${formatTaipeiTime(staleInfo.changedAt)}（台北時間）變更`
+    : null
+  const staleMessage = scopeDiff
+    ? staleInfo
+      ? `${scopeReason}；${staleReason ?? '以下結果已過期'}。以下結果可能不完整或已過期。`
+      : `${scopeReason}，結果可能不完整`
+    : staleReason
+      ? `${staleReason}，以下結果已過期。`
+      : '以下結果已過期，請重新回測。'
   const task = report.data?.task
   const stocks = report.data?.stocks ?? []
   const visible = stocks
@@ -251,29 +265,14 @@ export function BacktestPage() {
   return (
     <section className="backtest-page">
       <PageHeader title="戰法回測" description="以最近三年的歷史訊號與模擬交易，檢視戰法表現。" />
-      {scopeDiff && (
+      {(scopeDiff || staleInfo) && (
         <div className="backtest-stale-banner" role="status"
-          title={`新增：${scopeDiff.added.join('、') || '無'}；移除：${scopeDiff.removed.join('、') || '無'}`}>
-          <span>觀察清單已變更（新增 {scopeDiff.added.length} 檔、移除 {scopeDiff.removed.length} 檔），結果可能不完整</span>
+          title={scopeDiff ? `新增：${scopeDiff.added.join('、') || '無'}；移除：${scopeDiff.removed.join('、') || '無'}` : undefined}>
+          <span>{staleMessage}</span>
           <button className="button-primary"
-            disabled={running || start.isPending || !ids.length}
-            onClick={() => start.mutate(ids)}>
+            disabled={running || start.isPending || !rerunRuleIds.length}
+            onClick={() => start.mutate(rerunRuleIds)}>
             <FontAwesomeIcon icon={faPlay} />重新回測
-          </button>
-        </div>
-      )}
-      {staleInfo && (
-        <div className="backtest-stale-banner" role="status">
-          <span>{staleInfo.reason === 'definition' && staleInfo.changedAt
-            ? `戰法定義已於 ${formatTaipeiTime(staleInfo.changedAt)}（台北時間）變更，以下結果已過期。`
-            : '以下結果已過期，請重新回測。'}</span>
-          <button
-            className="button-primary"
-            disabled={running || start.isPending || !staleRuleIds.length}
-            onClick={() => start.mutate(staleRuleIds)}
-          >
-            <FontAwesomeIcon icon={faPlay} />
-            立即重新回測
           </button>
         </div>
       )}
