@@ -34,9 +34,13 @@ export function displayValue(key: string, value: unknown): string {
 export function differingParams(
   params: Record<string, unknown>,
   defaults: Record<string, number | null>,
+  originalNotes: Record<string, string> = {},
 ): string[] {
   return Object.keys(defaults).filter(
-    (key) => Object.hasOwn(params, key) && params[key] !== defaults[key],
+    (key) =>
+      !(defaults[key] === null && originalNotes[key]) &&
+      Object.hasOwn(params, key) &&
+      params[key] !== defaults[key],
   )
 }
 export function formValues(
@@ -49,9 +53,11 @@ export function formValues(
       key,
       inputValue(
         key,
-        restore || !Object.hasOwn(condition.params, key)
-          ? catalog.originalDefaults[key]
-          : condition.params[key],
+        restore
+          ? catalog.defaultParams[key]
+          : Object.hasOwn(condition.params, key)
+            ? condition.params[key]
+            : catalog.originalDefaults[key],
       ),
     ]),
   )

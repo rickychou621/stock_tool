@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.alerts.repository import AlertRepository
 from app.conditions.models import ConditionCatalog
+from app.conditions.original_defaults import DEFAULT_PARAMS
 from app.rules.models import WatchRule, WatchRuleCondition
 from app.rules.repository import RuleRepository
 from app.rules.schemas import WatchRuleCreateSchema, WatchRuleUpdateSchema
@@ -31,7 +32,9 @@ class RuleService:
         )
         rule.conditions = [
             WatchRuleCondition(
-                condition_id=c.condition_id, params=c.params, sort_order=i, role=c.role
+                condition_id=c.condition_id,
+                params={**DEFAULT_PARAMS.get(c.condition_id, {}), **c.params},
+                sort_order=i, role=c.role
             )
             for i, c in enumerate(payload.conditions)
         ]

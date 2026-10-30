@@ -28,6 +28,8 @@ it('只展開一列，PUT 成功後關閉並使規則相關快取失效', async 
               name: '月線',
               paramSchema: { period: 'int' },
               originalDefaults: { period: 20 },
+              defaultParams: { period: 20 },
+              originalNotes: {},
             },
           ]
         : rules) as T,

@@ -11,3 +11,5 @@ class ConditionCatalogSchema(CamelModel):
     update_frequency: str
     param_schema: dict[str, str]
     original_defaults: dict[str, float | int | None]
+    default_params: dict[str, float | int | None]
+    original_notes: dict[str, str]

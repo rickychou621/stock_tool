@@ -23,6 +23,8 @@ export interface RuleUpdate {
 
 export interface ConditionCatalogItem {
   paramSchema: Record<string, 'int' | 'float'>
+  defaultParams: Record<string, number | null>
+  originalNotes: Record<string, string>
   originalDefaults: Record<string, number | null>
   id: string
   name: string

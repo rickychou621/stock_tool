@@ -136,3 +136,29 @@ def test_conditions_include_schema_and_defaults(setup):
         "period": 20, "slope_lookback": 5, "min_slope_pct": None,
     }
     assert data["custom"]["originalDefaults"] == {}
+    assert data["ma_rising"]["defaultParams"]["min_slope_pct"] == 0.005
+    assert data["ma_rising"]["originalNotes"]["min_slope_pct"] == "未給數值（要求有斜率）"
+    assert data["custom"]["defaultParams"] == {}
+    assert data["custom"]["originalNotes"] == {}
+
+
+@pytest.mark.parametrize("params,expected", [({}, 0.03), ({"max_close_distance_pct": None}, None)])
+def test_create_fills_missing_defaults_but_preserves_null(setup, params, expected):
+    client, db, _ = setup
+    response = client.post("/rules", json={
+        "name": "新戰法", "logicOperator": "AND",
+        "conditions": [
+            {"conditionId": "ma_rising", "params": {}},
+            {"conditionId": "ma_touch_rebound", "params": params, "role": "entry"},
+        ],
+    })
+    assert response.status_code == 201
+    db.expire_all()
+    saved = db.get(WatchRule, response.json()["id"])
+    conditions = {c.condition_id: c.params for c in saved.conditions}
+    assert conditions["ma_rising"] == {
+        "period": 20, "slope_lookback": 5, "min_slope_pct": 0.005,
+    }
+    assert conditions["ma_touch_rebound"] == {
+        "period": 20, "tolerance": 0.01, "max_close_distance_pct": expected,
+    }

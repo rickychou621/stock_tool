@@ -96,6 +96,8 @@ export function RuleList({
                             condition.params,
                             conditionCatalog.find((c) => c.id === condition.conditionId)
                               ?.originalDefaults ?? {},
+                            conditionCatalog.find((c) => c.id === condition.conditionId)
+                              ?.originalNotes ?? {},
                           ).map((key) => (
                             <span
                               key={key}

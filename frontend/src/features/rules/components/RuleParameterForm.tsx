@@ -64,12 +64,14 @@ export function RuleParameterForm({ rule, catalog, onSave, onCancel }: Props) {
               {catalogs[index].name} · {ROLE_LABELS[condition.role]}
             </legend>
             {Object.entries(catalogs[index].paramSchema).map(([key, type]) => {
+              const note = catalogs[index].originalNotes[key]
               const original = catalogs[index].originalDefaults[key]
               const optional = original === null || condition.params[key] == null
               const changed =
                 differingParams(
                   { [key]: storedValue(key, values[index][key]) },
                   catalogs[index].originalDefaults,
+                  catalogs[index].originalNotes,
                 ).length > 0
               return (
                 <label className="field" key={key}>
@@ -97,8 +99,17 @@ export function RuleParameterForm({ rule, catalog, onSave, onCancel }: Props) {
                       )
                     }
                   />
-                  {original !== undefined && (
-                    <small className="muted">原文：{displayValue(key, original)}</small>
+                  {note ? (
+                    <>
+                      <small className="muted">{key === 'buffer' ? note : `原文：${note}`}</small>
+                      <small className="muted">
+                        預設：{displayValue(key, catalogs[index].defaultParams[key])}
+                      </small>
+                    </>
+                  ) : (
+                    original !== undefined && (
+                      <small className="muted">原文：{displayValue(key, original)}</small>
+                    )
                   )}
                   {changed && <span className="status-badge status-warning">與原文不同</span>}
                 </label>
@@ -123,7 +134,7 @@ export function RuleParameterForm({ rule, catalog, onSave, onCancel }: Props) {
             }
           >
             <FontAwesomeIcon icon={faRotateLeft} />
-            還原為原文預設
+            還原為預設值
           </button>
           <button type="button" onClick={onCancel}>
             <FontAwesomeIcon icon={faXmark} />

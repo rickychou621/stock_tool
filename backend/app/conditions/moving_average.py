@@ -43,6 +43,9 @@ class MaRisingCondition(Condition):
         if min_slope_pct is not None:
             reason = (f"月線斜率 {slope_pct:.2%}，門檻 ≥ {float(min_slope_pct):.2%}，"
                       + ("成立" if is_met else "未成立"))
+        if min_slope_pct is not None and not is_met:
+            reason = (f"月線斜率 {slope_pct:+.2%}，"
+                      f"低於下限 {float(min_slope_pct):.2%}")
         return ConditionResult(
             is_met, reason, indicators={"ma": ma, "ma_prev": ma_prev, "slope": ma - ma_prev,
                                       "slope_pct": slope_pct}
@@ -150,12 +153,17 @@ class MaTouchReboundCondition(Condition):
             and latest.close > previous.close
             and latest.close >= ma
         )
+        rebound_met = is_met
         if max_close_distance_pct is not None:
             is_met = is_met and ma != 0 and close_distance_pct <= float(max_close_distance_pct)
         reason = "回到月線後轉強" if is_met else "未回到月線後轉強"
         if max_close_distance_pct is not None:
             reason += (f"（收盤距月線 {close_distance_pct:.2%}，"
                        f"門檻 ≤ {float(max_close_distance_pct):.2%}）")
+        if (max_close_distance_pct is not None and rebound_met
+                and close_distance_pct > float(max_close_distance_pct)):
+            reason = (f"距月線 {close_distance_pct:+.2%}，"
+                      f"超過進場上限 {float(max_close_distance_pct):.2%}")
         return ConditionResult(
             is_met, reason,
             indicators={"ma": ma, "prev_ma": prev_ma, "close": latest.close,

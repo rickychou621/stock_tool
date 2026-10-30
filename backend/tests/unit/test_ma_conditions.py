@@ -211,7 +211,9 @@ def test_rebound_catalog_is_additive_repeatable_and_registered():
     assert get_condition("ma_touch_rebound") is MaTouchReboundCondition
 
 
-@pytest.mark.parametrize("distance,expected", [(0.029, True), (0.031, False), (0.087, False)])
+@pytest.mark.parametrize("distance,expected", [
+    (0.029, True), (0.031, False), (0.087, False), (0.098, False),
+])
 def test_rebound_max_close_distance(distance, expected):
     # Solve latest / ((19 * 100 + latest) / 20) - 1 = distance.
     latest = 1900 * (1 + distance) / (19 - distance)
@@ -224,8 +226,12 @@ def test_rebound_max_close_distance(distance, expected):
     result = condition.evaluate(bars, {"max_close_distance_pct": 0.03})
     assert result.is_met is expected
     assert result.indicators == unrestricted.indicators
-    assert f"收盤距月線 {distance:.2%}" in result.reason
-    assert "門檻 ≤ 3.00%" in result.reason
+    if expected:
+        assert f"收盤距月線 {distance:.2%}" in result.reason
+        assert "門檻 ≤ 3.00%" in result.reason
+    else:
+        assert result.reason == f"距月線 {distance:+.2%}，超過進場上限 3.00%"
+    assert condition.evaluate(bars, {"max_close_distance_pct": None}) == unrestricted
 
 
 def test_rebound_distance_does_not_replace_rebound_requirement():
@@ -233,3 +239,17 @@ def test_rebound_distance_does_not_replace_rebound_requirement():
         _bars([100] * 21), {"max_close_distance_pct": 0.03})
     assert not result.is_met
     assert result.indicators["close_distance_pct"] == 0
+
+
+def test_slope_below_default_reason():
+    bars = _bars([100] * 24 + [104])
+    result = MaRisingCondition().evaluate(bars, {"min_slope_pct": 0.005})
+    assert not result.is_met
+    assert result.reason == "月線斜率 +0.20%，低於下限 0.50%"
+
+
+def test_distance_failure_keeps_reason_when_rebound_also_fails():
+    bars = _bars([100] * 19 + [90, 120])
+    result = MaTouchReboundCondition().evaluate(bars, {"max_close_distance_pct": 0.03})
+    assert not result.is_met
+    assert result.reason.startswith("未回到月線後轉強（收盤距月線")
