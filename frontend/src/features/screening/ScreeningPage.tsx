@@ -1,3 +1,4 @@
+import { formatDataDate, WEEKLY_DATA_DATE_TITLE } from '../rules/dataDate'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faBell,
@@ -280,7 +281,11 @@ export function ScreeningPage() {
                         </details>
                       </td>
                       <td>
-                        {item.dataDate ?? '無資料'}
+                        <span
+                          title={item.evaluationFrequency === 'weekly' ? WEEKLY_DATA_DATE_TITLE : undefined}
+                        >
+                          {formatDataDate(item.dataDate, item.evaluationFrequency)}
+                        </span>
                         <br />
                         {item.priceAtTrigger ?? '—'}
                       </td>

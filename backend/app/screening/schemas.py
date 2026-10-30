@@ -13,6 +13,7 @@ class CandidateStockSchema(CamelModel):
 
 
 class ScanMatchSchema(CamelModel):
+    evaluation_frequency: str = "daily"
     id: int | None
     ticker: str
     name: str

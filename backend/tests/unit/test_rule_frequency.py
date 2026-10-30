@@ -23,12 +23,13 @@ from tests.unit.test_backtest_simulation import bars, rule, run
 @pytest.mark.parametrize("frequency", ["daily", "weekly"])
 def test_evaluation_weekdays(offset, frequency):
     day = date(2026, 1, 5) + timedelta(days=offset)
-    assert is_evaluation_day(day, frequency) == (frequency == "daily" or offset == 4)
+    days = [date(2026, 1, d) for d in range(5, 10)]
+    assert is_evaluation_day(day, frequency, days) == (frequency == "daily" or offset == 4)
 
 
 def test_last_day_holiday_unsorted_future_and_empty():
     days = [date(2026, 1, d) for d in [23, 15, 9, 12, 10]]
-    assert last_evaluation_day(date(2026, 1, 17), days, "weekly") == date(2026, 1, 9)
+    assert last_evaluation_day(date(2026, 1, 17), days, "weekly") == date(2026, 1, 15)
     assert last_evaluation_day(date(2026, 1, 17), days, "daily") == date(2026, 1, 15)
     assert last_evaluation_day(date(2026, 1, 8), days, "weekly") is None
     assert last_evaluation_day(date(2026, 1, 23), days, "weekly") == date(2026, 1, 23)
@@ -87,7 +88,7 @@ def weekly_data():
 @pytest.mark.parametrize("explicit_roles", [False, True])
 def test_weekly_signals_fills_prior_and_daily_prefix(monkeypatch, explicit_roles):
     data = weekly_data()
-    # Saturday and Monday suspended: pending buy must execute Tuesday.
+    # The last session is suspended, so that week cannot generate a signal.
     data = [replace(b, volume=0) if b.trade_date.day in (10, 12) else b for b in data]
     strategy = rule()
     strategy.evaluation_frequency = "weekly"
@@ -97,7 +98,7 @@ def test_weekly_signals_fills_prior_and_daily_prefix(monkeypatch, explicit_roles
 
     def evaluate(r, ticker, prefix):
         day = prefix[-1].trade_date
-        assert day.weekday() == 4
+        assert day.day in (15, 23, 30)
         seen.append(day)
         expected = [b for b in data if b.trade_date <= day and b.volume > 0]
         assert prefix == adjusted_bars(expected, [event] if day >= event.ex_dividend_date else [])
@@ -111,18 +112,18 @@ def test_weekly_signals_fills_prior_and_daily_prefix(monkeypatch, explicit_roles
 
     monkeypatch.setattr(RuleEvaluationService, "evaluate_bars", evaluate)
     result = run(data, strategy=strategy, events=[event])
-    assert seen == [date(2026, 1, d) for d in (9, 23, 30)]
+    assert seen == [date(2026, 1, d) for d in (15, 23, 30)]
     assert [s["state"] for s in result["signals"]] == ["first", "invalidated", "reentered"]
     closed, pending = result["trades"]
-    assert closed["entrySignalDate"] == "2026-01-09"
-    assert closed["entryDate"] == "2026-01-13"
+    assert closed["entrySignalDate"] == "2026-01-15"
+    assert closed["entryDate"] == "2026-01-19"
     assert closed["exitSignalDate"] == "2026-01-23"
     assert closed["exitDate"] == "2026-01-26"
     assert pending["entrySignalDate"] == "2026-01-30"
     assert pending["status"] == "unfilled"
 
 
-def test_weekly_warmup_and_midrun_insufficient_only_on_friday(monkeypatch):
+def test_weekly_warmup_and_midrun_insufficient_only_on_evaluation_days(monkeypatch):
     strategy = rule(params={"period": 10, "slope_lookback": 1})
     strategy.evaluation_frequency = "weekly"
     data = weekly_data()
@@ -131,7 +132,7 @@ def test_weekly_warmup_and_midrun_insufficient_only_on_friday(monkeypatch):
     original = RuleEvaluationService.evaluate_bars
 
     def evaluate(r, ticker, prefix):
-        assert prefix[-1].trade_date.weekday() == 4
+        assert prefix[-1].trade_date.day in (10, 15, 23, 30)
         result = original(r, ticker, prefix)
         if prefix[-1].trade_date.day == 30:
             result.condition_results[0].data_sufficient = False
@@ -196,3 +197,20 @@ def test_weekly_monthly_condition_uses_current_month_to_friday():
     assert signals["2026-03-20"]["isMet"] is False
     assert "2026-03-23" not in signals
     assert result["trades"][0]["exitDate"] == "2026-03-23"
+
+
+def test_holiday_week_and_unfinished_current_week():
+    days = [date(2026, 10, d) for d in (19, 20, 21, 22, 27, 28, 29)]
+    assert last_evaluation_day(days[-1], iter(days), "weekly") == date(2026, 10, 22)
+    assert is_evaluation_day(date(2026, 10, 22), "weekly", days)
+    assert not is_evaluation_day(days[-1], "weekly", days)
+    assert last_evaluation_day(days[3], days[:4], "weekly") is None
+    days.append(date(2026, 10, 30))
+    assert last_evaluation_day(days[-1], days, "weekly") == days[-1]
+    assert is_evaluation_day(days[-1], "weekly", days)
+    assert not is_evaluation_day(date(2026, 10, 29), "weekly", days)
+
+
+def test_weekly_dates_across_iso_year_boundary():
+    days = [date(2026, 12, 31), date(2027, 1, 4)]
+    assert last_evaluation_day(days[-1], days, "weekly") == days[0]

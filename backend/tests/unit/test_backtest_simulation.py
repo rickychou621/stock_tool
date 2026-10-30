@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, timedelta
 from types import SimpleNamespace
 
@@ -169,3 +170,13 @@ def test_metrics_compound_drawdown_factor_and_zero_trades():
     assert metrics([])["winRate"] is None
     assert metrics([])["compoundReturn"] is None
     assert not metrics([])["noLosses"]
+
+
+def test_holiday_week_evaluates_once_on_last_session():
+    dates = [date(2026, 10, d) for d in (19, 20, 21, 22, 27, 28, 29)]
+    data = [replace(bar, trade_date=day) for bar, day in zip(bars([10] * 7), dates, strict=True)]
+    strategy = rule()
+    strategy.evaluation_frequency = "weekly"
+    result = run(data, strategy=strategy)
+    assert [signal["date"] for signal in result["signals"]] == ["2026-10-22"]
+    assert result["actualEnd"] == "2026-10-22"

@@ -101,7 +101,7 @@ def classify(rule, ticker, bars, result=None, *, kind="stock", near_exit_pct=Non
                 if len(bars) > 1 else None
             )
             if previous_day is None:
-                return outcome(NO_DATA, "前一個有效交易日資料不足：尚無週五判斷資料")
+                return outcome(NO_DATA, "前一個有效交易日資料不足：尚無週評估日資料")
             previous_bars = [b for b in bars if b.trade_date <= previous_day]
         if not previous_bars:
             return outcome(NO_DATA, "前一個有效交易日資料不足：尚無行情資料")
@@ -149,7 +149,7 @@ def evaluate_with_state(
         )
         if cutoff is None:
             return missing_friday_result(rule, ticker), RuleState(
-                NO_DATA, "尚無週五判斷資料", None, None, None,
+                NO_DATA, "尚無週評估日資料", None, None, None,
             )
         bars = [bar for bar in bars if bar.trade_date <= cutoff]
     result = RuleEvaluationService.evaluate_bars(rule, ticker, bars)

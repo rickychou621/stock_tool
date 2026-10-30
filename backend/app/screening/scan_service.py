@@ -37,6 +37,7 @@ class ScanMatch:
     is_notified: bool
     reasons: list[str]
     state: str
+    evaluation_frequency: str = "daily"
 
 
 @dataclass
@@ -153,6 +154,7 @@ class ScreeningScanService:
                         name=names.get(ticker, ""),
                         reason=state.reason,
                         rule_name=rule.name,
+                        evaluation_frequency=rule.evaluation_frequency,
                         price_at_trigger=price,
                         data_date=result.data_date,
                         is_notified=alert.is_notified if alert else False,

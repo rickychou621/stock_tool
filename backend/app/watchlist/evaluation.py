@@ -67,6 +67,7 @@ class WatchlistEvaluationService:
             item_id=saved.item_id,
             rule_id=rule.id,
             rule_name=rule.name,
+            evaluation_frequency=rule.evaluation_frequency,
             result=saved.result,
             evaluated_at=saved.evaluated_at.replace(tzinfo=UTC),
             stale=stale,
@@ -121,6 +122,7 @@ class WatchlistEvaluationService:
                     failure = "評估失敗，請檢查戰法設定後重試。"
             if result is None:
                 result = RuleEvaluationSchema(
+                    evaluation_frequency=rule.evaluation_frequency,
                     rule_id=rule.id,
                     ticker=item.ticker,
                     is_met=False,

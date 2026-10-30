@@ -1,3 +1,4 @@
+import { formatDataDate, WEEKLY_DATA_DATE_TITLE } from '../../rules/dataDate'
 import { formatTaipeiTime } from '../../../lib/time'
 import type { SavedEvaluation } from '../types'
 import { STATE_LABELS } from '../../rules/state'
@@ -13,7 +14,10 @@ export function WatchlistEvaluationCell({
   busy,
   error,
 }: Props) {
-  const dataDate = results
+  const dailyResults = results.filter((r) => r.evaluationFrequency !== 'weekly')
+  const dateResults = dailyResults.length ? dailyResults : results
+  const dateFrequency = dailyResults.length ? 'daily' : 'weekly'
+  const dataDate = dateResults
     .map((r) => r.result.dataDate)
     .filter((d): d is string => !!d)
     .sort()
@@ -24,6 +28,9 @@ export function WatchlistEvaluationCell({
       (r) =>
         `最後行情 ${r.result.dataDate ?? '無資料'}，最近交易日 ${r.expectedDataDate ?? '無資料'}`,
     )
+    .join('；')
+  const dateTitle = [staleTitle, dateFrequency === 'weekly' ? WEEKLY_DATA_DATE_TITLE : '']
+    .filter(Boolean)
     .join('；')
   const upperBandMarks = [
     ...new Set(
@@ -46,6 +53,7 @@ export function WatchlistEvaluationCell({
               <RuleStateLine
                 state={{ ...r.result.state, state: r.state }}
                 dataDate={r.result.dataDate}
+                evaluationFrequency={r.evaluationFrequency}
               />
             ) : (
               <p className="muted">{STATE_LABELS[r.state]}：尚無狀態說明</p>
@@ -56,9 +64,9 @@ export function WatchlistEvaluationCell({
       {busy && <span role="status">更新行情並評估中…</span>}
       {!results.length && <span className="muted">尚未評估</span>}
       {dataDate && (
-        <p title={staleTitle || undefined}>
+        <p title={dateTitle || undefined}>
           <span className={staleResults.length ? 'stale-notice' : undefined}>
-            行情 {dataDate.slice(5).replace('-', '/')}
+            {dateFrequency === 'daily' ? '行情 ' : ''}{formatDataDate(dataDate, dateFrequency, 'MM/DD')}
           </span>
           {!!staleResults.length && <span className="status-badge status-warning">行情過期</span>}
         </p>
@@ -88,7 +96,7 @@ export function WatchlistEvaluationCell({
                 {r.state === 'STALE' ? '（舊結果）' : ''}
               </strong>
               <p className="muted">
-                行情：{r.result.dataDate ?? '無資料'} · 評估：
+                行情：{formatDataDate(r.result.dataDate, r.evaluationFrequency)} · 評估：
                 {formatTaipeiTime(r.evaluatedAt)}
               </p>
               <ul>

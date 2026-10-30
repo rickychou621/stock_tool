@@ -66,3 +66,28 @@ it('allows a Chinese badge label override', () => {
   render(<RuleStateBadge ruleName="戰法二" state="STALE" label="行情過期" />)
   expect(screen.getByTitle('戰法二：行情過期').textContent).toBe('戰法二行情過期')
 })
+
+it('週頻結果顯示月 K 截止日期與更新說明', () => {
+  const { container } = show([{
+    ...result,
+    evaluationFrequency: 'weekly',
+    marketDataStale: false,
+    result: { ...result.result, dataDate: '2026-10-22' },
+  }])
+  expect(screen.getByText('月 K：2026/10（計算至 10/22）')).toBeTruthy()
+  expect(container.textContent).toContain('現價 188.5（月 K 計算至 10/22）')
+  expect(screen.getAllByTitle('戰法三每週最後一個交易日收盤後更新')).toHaveLength(2)
+  expect(screen.queryByText('行情過期')).toBeNull()
+})
+
+it('行情摘要優先使用日頻日期，即使週頻日期較新', () => {
+  show([
+    { ...result, evaluationFrequency: 'daily', marketDataStale: false },
+    {
+      ...result, ruleId: 3, evaluationFrequency: 'weekly', marketDataStale: false,
+      result: { ...result.result, dataDate: '2026-10-30' },
+    },
+  ])
+  expect(screen.getByText('行情 10/28')).toBeTruthy()
+  expect(screen.queryByText('行情 10/30')).toBeNull()
+})

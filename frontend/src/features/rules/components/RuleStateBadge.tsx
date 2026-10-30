@@ -1,3 +1,4 @@
+import { formatDataDate, WEEKLY_DATA_DATE_TITLE } from '../dataDate'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faClock,
@@ -48,9 +49,11 @@ export function RuleStateBadge({
 export function RuleStateLine({
   state,
   dataDate,
+  evaluationFrequency = 'daily',
 }: {
   state: RuleStateDetail
   dataDate?: string | null
+  evaluationFrequency?: string
 }) {
   const distance =
     state.distancePct === null ? '—' : Number(state.distancePct.toFixed(1)).toFixed(1)
@@ -59,12 +62,15 @@ export function RuleStateLine({
     return `${rounded > 0 ? '+' : ''}${rounded.toFixed(digits)}`
   }
   return (
-    <p className="rule-state-line">
+    <p
+      className="rule-state-line"
+      title={evaluationFrequency === 'weekly' ? WEEKLY_DATA_DATE_TITLE : undefined}
+    >
       {STATE_LABELS[state.state]}：{state.reason}
       {state.triggerPrice !== null && (
         <>
           （觸價 {state.triggerPrice}，現價 {state.close ?? '—'}
-          {dataDate && `（${dataDate.slice(5).replace('-', '/')}）`}，距離 {distance}%）
+          {dataDate && `（${evaluationFrequency === 'weekly' ? '月 K 計算至 ' : ''}${formatDataDate(dataDate, 'daily', 'MM/DD')}）`}，距離 {distance}%）
         </>
       )}
       {state.maDistancePct != null && `｜距月線 ${signedPct(state.maDistancePct, 1)}%`}

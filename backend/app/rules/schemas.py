@@ -56,6 +56,7 @@ class RuleStateSchema(CamelModel):
 
 
 class RuleEvaluationSchema(CamelModel):
+    evaluation_frequency: str = "daily"
     state: RuleStateSchema | None = None
     premise_met: bool
     entry_triggered: bool | None

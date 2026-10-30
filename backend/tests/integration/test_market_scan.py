@@ -1211,7 +1211,7 @@ def test_chosen_rules_keeps_condition_roles(factory):
 
 @pytest.mark.parametrize("holiday", [False, True])
 @pytest.mark.parametrize("previous_triggered", [False, True])
-def test_weekly_scan_compares_previous_friday(holiday, previous_triggered):
+def test_weekly_scan_compares_previous_evaluation_day(holiday, previous_triggered):
     days = [
         date(2026, 1, 1) + timedelta(days=i) for i in range(23)
         if (date(2026, 1, 1) + timedelta(days=i)).weekday() < 5
@@ -1227,7 +1227,7 @@ def test_weekly_scan_compares_previous_friday(holiday, previous_triggered):
         ],
     )
     sample = bars(days=days, volume=100)
-    prev_day = date(2026, 1, 9 if holiday else 16)
+    prev_day = date(2026, 1, 15 if holiday else 16)
     for bar in sample:
         if bar.trade_date == days[-1] or (bar.trade_date == prev_day and previous_triggered):
             bar.volume = 1000
@@ -1255,12 +1255,10 @@ def test_weekly_scan_thursday_does_not_evaluate(monkeypatch):
     assert outcome.continuing == 0
 
 
-@pytest.mark.parametrize("start", [5, 9])
-def test_weekly_scan_without_sufficient_previous_friday(start):
+@pytest.mark.parametrize("start", [9, 12])
+def test_weekly_scan_without_sufficient_previous_evaluation_day(start):
     days = [date(2026, 1, d) for d in range(start, 17) if date(2026, 1, d).weekday() < 5]
-    # With Jan 9 removed there is no prior Friday; with it first there is no warmup.
-    if start == 5:
-        days.remove(date(2026, 1, 9))
+    # Starting on Jan 12 has no prior week; starting on Jan 9 lacks warmup.
     strategy = NS(
         id=1, name="weekly", logic_operator="AND", evaluation_frequency="weekly",
         conditions=[

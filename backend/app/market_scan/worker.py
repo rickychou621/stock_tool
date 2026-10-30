@@ -91,7 +91,7 @@ def evaluate_stock(ticker, name, instrument_kind, rules, bars, dates):
     ]
     for rule in rules:
         weekly = getattr(rule, "evaluation_frequency", "daily") == "weekly"
-        if weekly and not is_evaluation_day(dates[-1], "weekly"):
+        if weekly and not is_evaluation_day(dates[-1], "weekly", dates):
             outcome.rules[rule.id] = ("normal", None)
             continue
         try:
@@ -123,7 +123,7 @@ def evaluate_stock(ticker, name, instrument_kind, rules, bars, dates):
                     last_evaluation_day(dates[-2], dates, "weekly") if len(dates) > 1 else None
                 )
                 if prev_day is None:
-                    reason = "前一個有效交易日資料不足：尚無週五判斷資料"
+                    reason = "前一個有效交易日資料不足：尚無週評估日資料"
                     outcome.rules[rule.id] = ("insufficient_history", reason)
                     outcome.errors.append((rule.id, "insufficient_history", reason))
                     continue

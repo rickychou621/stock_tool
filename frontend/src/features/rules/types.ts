@@ -43,6 +43,7 @@ export interface ConditionEvaluation {
 }
 
 export interface RuleEvaluationResult {
+  evaluationFrequency?: string
   state?: RuleStateDetail | null
   premiseMet?: boolean
   entryTriggered?: boolean | null

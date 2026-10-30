@@ -38,6 +38,7 @@ class RuleEvaluationResult:
     exit_triggered: bool | None
     status: str = "not_met"
     data_date: date | None = None
+    evaluation_frequency: str = "daily"
 
 
 class RuleEvaluationService:
@@ -106,6 +107,7 @@ class RuleEvaluationService:
             premise_met = False
 
         return RuleEvaluationResult(
+            evaluation_frequency=getattr(rule, "evaluation_frequency", "daily"),
             rule_id=rule.id,
             ticker=ticker,
             is_met=premise_met,
@@ -121,12 +123,13 @@ class RuleEvaluationService:
 
 def missing_friday_result(rule: WatchRule, ticker: str) -> RuleEvaluationResult:
     return RuleEvaluationResult(
+        evaluation_frequency=getattr(rule, "evaluation_frequency", "daily"),
         rule_id=rule.id,
         ticker=ticker,
         is_met=False,
         logic_operator=rule.logic_operator,
         condition_results=[
-            ConditionEvaluation("evaluation", False, "尚無週五判斷資料", data_sufficient=False)
+            ConditionEvaluation("evaluation", False, "尚無週評估日資料", data_sufficient=False)
         ],
         premise_met=False,
         entry_triggered=None,

@@ -86,6 +86,7 @@ def evaluate_rule(
 
     result, state = evaluate_with_state(db, rule, ticker, kind=instrument_kind(db, ticker))
     return RuleEvaluationSchema(
+        evaluation_frequency=result.evaluation_frequency,
         state=asdict(state),
         rule_id=result.rule_id,
         ticker=result.ticker,

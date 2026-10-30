@@ -60,9 +60,13 @@ def factory(tmp_path):
     engine.dispose()
 
 
-def seed_bars(factory, *, count=25, latest=DAY, invalid=False, zero_volume=False):
+def seed_bars(
+    factory, *, count=25, latest=DAY, invalid=False, zero_volume=False, weekdays_only=False,
+):
     with factory() as db:
         for i in range(count):
+            if weekdays_only and (latest - timedelta(days=count - i - 1)).weekday() >= 5:
+                continue
             db.add(
                 StockPriceDaily(
                     ticker="2330",
@@ -763,7 +767,7 @@ def test_frequency_cutoff_saved_by_both_paths(factory, monkeypatch, path, freque
     friday = date(2026, 10, 16)
     if no_friday:
         seed_saved(factory)
-    seed_bars(factory, count=3 if no_friday else 35, latest=wednesday)
+    seed_bars(factory, count=3 if no_friday else 35, latest=wednesday, weekdays_only=True)
     monkeypatch.setattr(MarketDataService, "sync_daily_prices", Mock(return_value=35))
     with factory() as db:
         rule = db.get(WatchRule, 1)
@@ -799,7 +803,7 @@ def test_frequency_cutoff_saved_by_both_paths(factory, monkeypatch, path, freque
         if no_friday and frequency == "weekly":
             assert saved.result["status"] == "insufficient_data"
             assert saved.result["dataDate"] is None
-            assert saved.result["conditionResults"][0]["reason"] == "尚無週五判斷資料"
+            assert saved.result["conditionResults"][0]["reason"] == "尚無週評估日資料"
             assert saved.data_version == db.scalar(select(Stock)).data_version
         else:
             assert saved.result["state"]["state"] == (
@@ -817,7 +821,7 @@ def test_weekly_api_and_watchlist_share_state(factory, monkeypatch, no_friday):
     from app.market_data.repository import MarketDataRepository
     from app.watchlist.evaluation import WatchlistEvaluationService
 
-    seed_bars(factory, count=3 if no_friday else 35, latest=date(2026, 10, 21))
+    seed_bars(factory, count=3 if no_friday else 35, latest=date(2026, 10, 21), weekdays_only=True)
     monkeypatch.setattr(MarketDataService, "sync_daily_prices", Mock(return_value=35))
     with factory() as db:
         rule = db.get(WatchRule, 1)
@@ -836,6 +840,7 @@ def test_weekly_api_and_watchlist_share_state(factory, monkeypatch, no_friday):
         with TestClient(app) as client:
             response = client.get("/rules/1/evaluate", params={"ticker": "2330"})
         assert response.status_code == 200
+        assert response.json()["evaluationFrequency"] == saved.evaluation_frequency == "weekly"
         assert response.json()["state"] == saved.result["state"]
         assert saved.state == ("NO_DATA" if no_friday else "NONE")
         assert response.json()["dataDate"] == (None if no_friday else "2026-10-16")
@@ -1000,7 +1005,7 @@ def test_validate_bars_names_invalid_volume(factory, volume):
     ("daily", None, "2026-10-12", False),
 ])
 def test_saved_market_data_freshness(factory, frequency, data_date, expected, stale):
-    seed_bars(factory)
+    seed_bars(factory, weekdays_only=True)
     seed_saved(factory)
     with factory() as db:
         db.get(WatchRule, 1).evaluation_frequency = frequency
@@ -1020,5 +1025,38 @@ def test_saved_market_data_freshness(factory, frequency, data_date, expected, st
             row = next(r for r in response.json() if r["ruleId"] == 1)
             assert row["expectedDataDate"] == expected
             assert row["marketDataStale"] is stale
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_holiday_week_saved_and_lookup_dates_are_fresh(factory, monkeypatch):
+    from app.watchlist.evaluation import WatchlistEvaluationService
+
+    seed_bars(factory, count=35, latest=date(2026, 10, 29), weekdays_only=True)
+    monkeypatch.setattr(MarketDataService, "sync_daily_prices", Mock(return_value=35))
+    with factory() as db:
+        for bar in db.scalars(select(StockPriceDaily)):
+            if bar.trade_date in (date(2026, 10, 23), date(2026, 10, 26)):
+                db.delete(bar)
+        rule = db.get(WatchRule, 1)
+        rule.evaluation_frequency = "weekly"
+        rule.conditions[0].params = {"lookback": 1, "multiplier": 2}
+        db.commit()
+        saved = WatchlistEvaluationService(db).evaluate(db.get(HoldingsWatchlist, 1), [1])[0]
+        assert saved.result["dataDate"] == "2026-10-22"
+        assert saved.expected_data_date == date(2026, 10, 22)
+        assert saved.evaluation_frequency == "weekly"
+        assert not saved.market_data_stale
+
+    def dependency():
+        with factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = dependency
+    try:
+        with TestClient(app) as client:
+            payload = client.get("/rules/1/evaluate", params={"ticker": "2330"}).json()
+        assert payload["dataDate"] == "2026-10-22"
+        assert payload["evaluationFrequency"] == "weekly"
     finally:
         app.dependency_overrides.clear()

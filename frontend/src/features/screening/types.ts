@@ -37,6 +37,7 @@ export interface CandidateRefreshSummary {
 }
 
 export interface ScanMatch {
+  evaluationFrequency?: string
   state: RuleStateCode
   id: number | null
   ticker: string

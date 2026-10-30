@@ -14,6 +14,7 @@ export interface WatchlistItem {
 export type WatchlistInput = Pick<WatchlistItem, 'ticker' | 'entryPrice' | 'entryDate' | 'notes'>
 export type WatchlistEdit = Pick<WatchlistItem, 'entryPrice' | 'entryDate' | 'notes' | 'sector'>
 export interface SavedEvaluation {
+  evaluationFrequency?: string
   state: RuleStateCode
   itemId: number
   ruleId: number

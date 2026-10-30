@@ -42,6 +42,7 @@ class EvaluateWatchlistSchema(CamelModel):
 
 
 class SavedEvaluationSchema(CamelModel):
+    evaluation_frequency: str = "daily"
     item_id: int
     rule_id: int
     rule_name: str

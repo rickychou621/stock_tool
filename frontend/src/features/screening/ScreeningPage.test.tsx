@@ -137,3 +137,16 @@ it('掃描日期與時間缺值顯示破折號', async () => {
   await screen.findByText('基準日 —・掃描時間 —')
   client.clear()
 })
+
+it('週頻行情顯示月 K 與計算截止日', async () => {
+  const { client } = setup({
+    jobId: 'weekly', status: 'done', done: 2, total: 2, error: null,
+    summary: {
+      ...summary,
+      matches: [{ ...summary.matches[0], evaluationFrequency: 'weekly' }],
+    },
+  })
+  expect(await screen.findByText('月 K：2026/10（計算至 10/22）')).toBeTruthy()
+  expect(screen.getByTitle('戰法三每週最後一個交易日收盤後更新')).toBeTruthy()
+  client.clear()
+})
