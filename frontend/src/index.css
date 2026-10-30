@@ -676,6 +676,15 @@ details li + li {
   gap: 12px;
 }
 .state-counts { margin-top: 16px; }
+.state-counts select {
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font-size: 14px;
+}
 .state-counts button[aria-pressed='true'] {
   outline: 2px solid currentColor;
   outline-offset: 2px;

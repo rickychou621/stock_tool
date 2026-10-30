@@ -47,6 +47,9 @@ export function WatchlistEvaluationCell({
         {results.map((r) => (
           <div className="rule-state-item" key={r.ruleId}>
             <RuleStateBadge ruleName={r.ruleName} state={r.state} />
+            {r.result.state?.largeStopDistance && (
+              <span className="status-badge status-warning">停損距離大</span>
+            )}
             {r.state === 'STALE' ? (
               <p className="stale-notice">行情或戰法已更新，請重新評估</p>
             ) : r.result.state ? (

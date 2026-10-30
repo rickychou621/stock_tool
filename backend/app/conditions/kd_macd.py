@@ -151,7 +151,8 @@ class KdHighDeathCrossCondition(Condition):
             else f"月K 未出現高檔死亡交叉（K={cur_k:.1f}，D={cur_d:.1f}）"
         )
         return ConditionResult(
-            is_met, reason, indicators={"k": cur_k, "d": cur_d, "prev_k": prev_k}
+            is_met, reason,
+            indicators={"k": cur_k, "d": cur_d, "prev_k": prev_k, "threshold": threshold},
         )
 
 

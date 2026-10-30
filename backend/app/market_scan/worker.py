@@ -11,6 +11,7 @@ from app.market_scan.data import prepare, required_days
 from app.market_scan.models import DividendCoverage
 from app.rules.evaluation import RuleEvaluationService
 from app.rules.frequency import is_evaluation_day, last_evaluation_day
+from app.rules.protective_stop import protective_stop
 
 SUSPENDED_AFTER = 20
 
@@ -152,6 +153,9 @@ def evaluate_stock(ticker, name, instrument_kind, rules, bars, dates):
                 for c in candidate_conditions
                 for k, v in c.indicators.items()
             }
+            stop = protective_stop(result, instrument_kind)
+            if stop and stop["close"]:
+                indicators["protective_stop.stop_distance_pct"] = stop["price"] / stop["close"] - 1
             if any(not math.isfinite(v) for v in indicators.values()):
                 raise ValueError("戰法指標含無效數字")
             reason = "；".join(c.reason for c in candidate_conditions if c.is_met)

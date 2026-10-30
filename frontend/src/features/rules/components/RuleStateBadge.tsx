@@ -1,3 +1,4 @@
+import { formatRuleMetrics } from '../ruleMetrics'
 import { formatDataDate, WEEKLY_DATA_DATE_TITLE } from '../dataDate'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
@@ -57,10 +58,7 @@ export function RuleStateLine({
 }) {
   const distance =
     state.distancePct === null ? '—' : Number(state.distancePct.toFixed(1)).toFixed(1)
-  const signedPct = (value: number, digits: number) => {
-    const rounded = Number(value.toFixed(digits))
-    return `${rounded > 0 ? '+' : ''}${rounded.toFixed(digits)}`
-  }
+  const metrics = formatRuleMetrics(state)
   return (
     <p
       className="rule-state-line"
@@ -73,8 +71,7 @@ export function RuleStateLine({
           {dataDate && `（${evaluationFrequency === 'weekly' ? '月 K 計算至 ' : ''}${formatDataDate(dataDate, 'daily', 'MM/DD')}）`}，距離 {distance}%）
         </>
       )}
-      {state.maDistancePct != null && `｜距月線 ${signedPct(state.maDistancePct, 1)}%`}
-      {state.maSlopePct != null && `｜月線斜率 ${signedPct(state.maSlopePct, 2)}%／5 日`}
+      {metrics.length > 0 && `｜${metrics.join('｜')}`}
     </p>
   )
 }

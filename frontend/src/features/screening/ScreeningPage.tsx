@@ -9,6 +9,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons'
 import { formatTaipeiTime } from '../../lib/time'
 import { ETF_CATEGORY_LABELS } from '../settings/etfCategories'
+import { formatRuleMetrics } from '../rules/ruleMetrics'
 import { RuleStateBadge } from '../rules/components/RuleStateBadge'
 import { PageHeader } from '../../components/PageHeader'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -23,7 +24,7 @@ import type { ScanJob, ScanSummary, TodayMatchItem, NotificationSummary } from '
 import type { SavedEvaluation, WatchlistItem } from '../watchlist/types'
 import { getSyncHint } from './syncHint'
 
-const FILTER_STATES: RuleStateCode[] = ['ENTRY', 'NEAR_EXIT', 'HOLD', 'STALE']
+const FILTER_STATES: RuleStateCode[] = ['ENTRY', 'STALE']
 
 export function ScreeningPage() {
   const [selectedStates, setSelectedStates] = useState<RuleStateCode[]>(['ENTRY'])
@@ -120,7 +121,7 @@ export function ScreeningPage() {
   const pendingIds = [...new Set(pendingMatches.flatMap((m) => (m.id === null ? [] : [m.id])))]
   const pendingStocks = new Set(pendingMatches.map((m) => m.ticker)).size
   const counts = Object.fromEntries(
-    FILTER_STATES.map((state) => [state, matches.filter((m) => m.state === state).length]),
+    [...FILTER_STATES, 'NEAR_EXIT', 'HOLD'].map((state) => [state, matches.filter((m) => m.state === state).length]),
   )
   const stockCount = (state: RuleStateCode) =>
     new Set(matches.filter((m) => m.state === state).map((m) => m.ticker)).size
@@ -226,7 +227,7 @@ export function ScreeningPage() {
               <span>進場訊號</span>
               <strong>
                 {stockCount('ENTRY')}
-                <small> 檔</small>
+                <small> 檔（{counts.ENTRY} 筆）</small>
               </strong>
             </div>
           </div>
@@ -244,9 +245,18 @@ export function ScreeningPage() {
                 aria-pressed={selectedStates.includes(state)}
                 onClick={() => toggleState(state)}
               >
-                {state === 'STALE' ? '行情過期' : STATE_LABELS[state]} {counts[state]}
+                {state === 'STALE' ? '行情過期' : STATE_LABELS[state]} {counts[state]} 筆（{stockCount(state)} 檔）
               </button>
             ))}
+            <select
+              aria-label="其他狀態"
+              value={selectedStates.find((state) => state === 'NEAR_EXIT' || state === 'HOLD') ?? ''}
+              onChange={(event) => setSelectedStates(event.target.value ? [event.target.value as RuleStateCode] : ['ENTRY'])}
+            >
+              <option value="">其他狀態</option>
+              <option value="NEAR_EXIT">接近出場 {counts.NEAR_EXIT} 筆</option>
+              <option value="HOLD">續抱 {counts.HOLD} 筆</option>
+            </select>
           </div>
           <p className="muted"><small>篩選數字依戰法計算（筆），同一檔可重複</small></p>
           {visibleMatches.length === 0 ? (
@@ -291,6 +301,7 @@ export function ScreeningPage() {
                         ) : (
                           item.ruleName
                         )}
+                        {item.largeStopDistance && <span className="status-badge status-warning">停損距離大</span>}
                         {showWatchlist && watchId !== undefined && (
                           <p
                             className={differs ? 'status-warning' : 'muted'}
@@ -306,6 +317,9 @@ export function ScreeningPage() {
                         <p className="muted">
                           <small>{item.reason}</small>
                         </p>
+                        {formatRuleMetrics(item).length > 0 && (
+                          <p className="muted">{formatRuleMetrics(item).join('｜')}</p>
+                        )}
                         <details>
                           <summary>符合原因</summary>
                           <ul>

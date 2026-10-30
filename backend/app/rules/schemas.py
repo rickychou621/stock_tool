@@ -53,6 +53,8 @@ class RuleStateSchema(CamelModel):
     distance_pct: float | None
     ma_distance_pct: float | None = None
     ma_slope_pct: float | None = None
+    stop_distance_pct: float | None = None
+    large_stop_distance: bool = False
 
 
 class RuleEvaluationSchema(CamelModel):

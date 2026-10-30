@@ -8,6 +8,8 @@ export interface RuleStateDetail {
   distancePct: number | null
   maDistancePct?: number | null
   maSlopePct?: number | null
+  stopDistancePct?: number | null
+  largeStopDistance?: boolean
 }
 
 export const STATE_LABELS: Record<RuleStateCode, string> = {

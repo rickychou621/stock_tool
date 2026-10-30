@@ -38,6 +38,10 @@ class ScanMatch:
     is_notified: bool
     reasons: list[str]
     state: str
+    ma_distance_pct: float | None = None
+    ma_slope_pct: float | None = None
+    stop_distance_pct: float | None = None
+    large_stop_distance: bool = False
     evaluation_frequency: str = "daily"
 
 
@@ -112,6 +116,7 @@ class ScreeningScanService:
                 )
                 if result.data_date is not None and expected and result.data_date < expected:
                     state.state = STALE
+                    state.large_stop_distance = False
                     state.reason = (
                         f"行情過期：最後行情 {result.data_date}，最近交易日 {expected}"
                     )
@@ -155,6 +160,10 @@ class ScreeningScanService:
                         ticker=ticker,
                         name=names.get(ticker, ""),
                         reason=state.reason,
+                        ma_distance_pct=state.ma_distance_pct,
+                        ma_slope_pct=state.ma_slope_pct,
+                        stop_distance_pct=state.stop_distance_pct,
+                        large_stop_distance=state.large_stop_distance,
                         rule_name=rule.name,
                         evaluation_frequency=rule.evaluation_frequency,
                         price_at_trigger=price,

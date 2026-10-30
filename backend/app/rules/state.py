@@ -35,6 +35,8 @@ class RuleState:
     distance_pct: float | None
     ma_distance_pct: float | None = None
     ma_slope_pct: float | None = None
+    stop_distance_pct: float | None = None
+    large_stop_distance: bool = False
 
 
 def _triggered(result):
@@ -71,6 +73,8 @@ def classify(rule, ticker, bars, result=None, *, kind="stock", near_exit_pct=Non
     close = stop["close"] if stop else None
     distance = (close - price) / price if price is not None and close is not None else None
 
+    stop_distance = price / close - 1 if price is not None and close else None
+
     def indicator_pct(condition_id, key, digits):
         value = next(
             (c.indicators.get(key) for c in result.condition_results
@@ -80,8 +84,13 @@ def classify(rule, ticker, bars, result=None, *, kind="stock", near_exit_pct=Non
         return round(value * 100, digits) if value is not None else None
 
     def outcome(state, reason):
+        if state == ENTRY and stop_distance is not None:
+            reason += f"｜停損距離 {stop_distance * 100:.1f}%（以觸價 {price:g} 計）"
         return RuleState(
             state, reason, price, close, round(distance * 100, 1) if distance is not None else None,
+            stop_distance_pct=round(stop_distance * 100, 1) if stop_distance is not None else None,
+            large_stop_distance=(state == ENTRY and stop_distance is not None
+                                 and abs(stop_distance) > get_settings().large_stop_distance_pct),
             ma_distance_pct=indicator_pct("ma_touch_rebound", "close_distance_pct", 1),
             ma_slope_pct=indicator_pct("ma_rising", "slope_pct", 2),
         )
@@ -117,8 +126,16 @@ def classify(rule, ticker, bars, result=None, *, kind="stock", near_exit_pct=Non
             ))
     if near_exit_pct is None:
         near_exit_pct = get_settings().near_exit_pct
+    near_reasons = []
+    for c in result.condition_results:
+        if c.condition_id == "kd_high_death_cross" and not c.is_met:
+            k, threshold = c.indicators.get("k"), c.indicators.get("threshold")
+            if k is not None and threshold is not None and k > threshold:
+                near_reasons.append(f"KD 高檔（K {k:.1f} > {threshold:g}），留意停利")
     if result.premise_met and distance is not None and distance <= near_exit_pct:
-        return outcome(NEAR_EXIT, f"收盤距觸價 {distance * 100:.1f}%")
+        near_reasons.append(f"收盤距觸價 {distance * 100:.1f}%")
+    if near_reasons:
+        return outcome(NEAR_EXIT, "；".join(near_reasons))
     if result.premise_met:
         if result.entry_triggered is None:
             return outcome(HOLD, reasons("premise"))

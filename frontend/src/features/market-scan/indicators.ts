@@ -2,6 +2,7 @@ const number = (n: number | null) =>
   n === null ? '無資料' : n.toLocaleString('zh-TW', { maximumFractionDigits: 2 })
 export const metricLabel = (key: string) => {
   const names: Record<string, string> = {
+    'protective_stop.stop_distance_pct': '停損距離',
     'ma_rising.ma': '月線',
     'ma_rising.ma_prev': '5 日前月線',
     'ma_rising.slope': '月線變化',
@@ -50,7 +51,7 @@ export function metricValue(key: string, value: number | null): string {
   return `${normalized > 0 ? '+' : ''}${normalized.toFixed(2)}%`
 }
 
-const shownLabels = ['月線', '月線斜率', '距月線', '收盤價', '前日收盤']
+const shownLabels = ['月線', '月線斜率', '距月線', '停損距離', '收盤價', '前日收盤']
 
 export function pickIndicators(indicators: Record<string, number | null>) {
   const shown: { key: string; label: string; value: string }[] = []

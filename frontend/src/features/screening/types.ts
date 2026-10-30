@@ -49,6 +49,10 @@ export interface ScanMatch {
   isNotified: boolean
   reason: string
   reasons: string[]
+  stopDistancePct?: number | null
+  largeStopDistance?: boolean
+  maDistancePct?: number | null
+  maSlopePct?: number | null
 }
 export interface NotificationSummary {
   sentIds: number[]

@@ -606,7 +606,8 @@ def test_screening_all_match_states_use_daily_quote_date(context, monkeypatch, s
     old = latest - timedelta(days=11)
     monkeypatch.setattr(scan_service, "evaluate_with_state", lambda *args, **kwargs: (
         SimpleNamespace(status="ok", data_date=old, condition_results=[]),
-        SimpleNamespace(state=state, reason="符合"),
+        SimpleNamespace(state=state, reason="符合", ma_distance_pct=None,
+                        ma_slope_pct=None, stop_distance_pct=None, large_stop_distance=False),
     ))
     summary = scan_service.ScreeningScanService(db).run_scan()
     assert len(summary.matches) == 3

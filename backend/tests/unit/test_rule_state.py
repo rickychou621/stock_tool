@@ -296,3 +296,47 @@ def test_missing_reason_keeps_largest_requirement_per_timeframe():
     assert _missing_reason(result) == (
         "月 K 資料不足：需要 26 根，目前 7 根；日 K 資料不足：需要 25 根，目前 7 根"
     )
+
+
+@pytest.mark.parametrize("price,close,expected,warning", [
+    (526, 594, -11.4, True), (98, 100, -2.0, False),
+    (93, 100, -7.0, False), (92.99, 100, -7.0, True),
+])
+def test_entry_stop_distance(monkeypatch, price, close, expected, warning):
+    monkeypatch.setattr("app.rules.state.protective_stop", lambda *a: {
+        "price": price, "close": close,
+    })
+    strategy = rule(condition(), condition("entry", lambda h: len(h) >= 3))
+    state = classify(strategy, "TEST", bars())
+    assert state.state == ENTRY
+    assert state.stop_distance_pct == expected
+    assert state.large_stop_distance is warning
+    assert f"停損距離 {expected:.1f}%（以觸價 {price:g} 計）" in state.reason
+
+
+@pytest.mark.parametrize("threshold,expected", [(70, NEAR_EXIT), (100, HOLD), (88.2, HOLD)])
+def test_kd_high_without_death_cross(threshold, expected):
+    strategy = rule(condition(), condition("entry", False), condition("exit", False))
+    result = RuleEvaluationService.evaluate_bars(strategy, "TEST", bars())
+    kd = result.condition_results[-1]
+    kd.condition_id = "kd_high_death_cross"
+    kd.indicators = {"k": 88.2, "d": 86.8, "threshold": threshold}
+    state = classify(strategy, "TEST", bars(), result)
+    assert state.state == expected
+    if expected == NEAR_EXIT:
+        assert state.reason == "KD 高檔（K 88.2 > 70），留意停利"
+    assert state.stop_distance_pct is None
+    assert state.large_stop_distance is False
+
+
+def test_kd_and_stop_near_exit_join_reasons():
+    strategy = stop_rule()
+    result = RuleEvaluationService.evaluate_bars(strategy, "TEST", bars(22))
+    kd = result.condition_results[1]
+    kd.condition_id = "kd_high_death_cross"
+    kd.indicators = {"k": 88.2, "threshold": 70}
+    state = classify(strategy, "TEST", bars(22), result)
+    assert state.state == NEAR_EXIT
+    assert state.reason == "KD 高檔（K 88.2 > 70），留意停利；收盤距觸價 2.4%"
+    assert state.stop_distance_pct == -2.3
+    assert state.large_stop_distance is False

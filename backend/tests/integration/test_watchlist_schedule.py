@@ -939,7 +939,8 @@ def test_manual_scan_only_records_entry(factory, monkeypatch, state_name):
     monkeypatch.setattr(scan_service, "evaluate_with_state", lambda *a, **kw: (
         SimpleNamespace(status="matched", data_date=DAY,
                         condition_results=[SimpleNamespace(reason="條件符合")]),
-        SimpleNamespace(state=state_name, reason="狀態原因"),
+        SimpleNamespace(state=state_name, reason="狀態原因", ma_distance_pct=0.9,
+                        ma_slope_pct=0.64, stop_distance_pct=-2.1, large_stop_distance=False),
     ))
     with factory() as db:
         for _ in range(2):
@@ -947,6 +948,15 @@ def test_manual_scan_only_records_entry(factory, monkeypatch, state_name):
             match, = summary.matches
             assert match.name == "台積電"
             assert match.reason == "狀態原因"
+            from dataclasses import asdict
+
+            from app.screening.schemas import ScanMatchSchema
+
+            payload = ScanMatchSchema.model_validate(asdict(match)).model_dump(by_alias=True)
+            assert payload["stopDistancePct"] == -2.1
+            assert payload["maDistancePct"] == 0.9
+            assert payload["maSlopePct"] == 0.64
+            assert payload["largeStopDistance"] is False
             assert match.reasons == ["條件符合"]
             assert match.is_notified is False
             persisted = state_name == "ENTRY"

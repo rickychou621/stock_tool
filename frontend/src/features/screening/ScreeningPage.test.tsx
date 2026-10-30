@@ -100,10 +100,10 @@ it('行情過期可篩選且不通知，排除文字依實際類別顯示', asyn
       matches: [{ ...summary.matches[0], id: null, state: 'STALE', reason: '行情過期原因' }],
     },
   })
-  const filter = await screen.findByRole('button', { name: '行情過期 1' })
+  const filter = await screen.findByRole('button', { name: '行情過期 1 筆（1 檔）' })
   expect(filter.getAttribute('aria-pressed')).toBe('false')
   expect(screen.queryByText('行情過期原因')).toBeNull()
-  expect(screen.getByRole('button', { name: '進場 0' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: '進場 0 筆（0 檔）' })).toBeTruthy()
   expect((screen.getByRole('button', { name: '通知 Telegram（0 檔）' }) as HTMLButtonElement).disabled)
     .toBe(true)
   expect(screen.getByText(/已排除 3 檔債券／期貨ETF/)).toBeTruthy()
@@ -191,5 +191,26 @@ it.each([
   }, responses)
   await screen.findByRole('link', { name: /2330/ })
   expect(screen.queryByText(/觀察清單：/)).toBeNull()
+  client.clear()
+})
+
+it('快篩筆數與檔數一致，其他狀態用選單，顯示共用指標與警示', async () => {
+  const { client } = setup({
+    latestMarketDate: null, jobId: 'metrics', status: 'done', done: 1, total: 1, error: null,
+    summary: { ...summary, matches: [
+      { ...summary.matches[0], maDistancePct: 0.9, maSlopePct: 0.64, stopDistancePct: -2.1, largeStopDistance: true },
+      { ...summary.matches[0], ruleId: 8, ruleName: '戰法二' },
+      { ...summary.matches[0], ticker: '1104', state: 'HOLD' },
+    ] },
+  })
+  expect(await screen.findByRole('button', { name: '進場 2 筆（1 檔）' })).toBeTruthy()
+  expect(screen.getByText('進場訊號').parentElement?.textContent).toBe('進場訊號1 檔（2 筆）')
+  expect(screen.getByRole('button', { name: '行情過期 0 筆（0 檔）' })).toBeTruthy()
+  expect(screen.queryByRole('button', { name: /^續抱|^接近出場/ })).toBeNull()
+  expect(screen.getByText('距月線 +0.9%｜月線斜率 +0.64%／5 日｜停損距離 -2.1%')).toBeTruthy()
+  expect(screen.getByText('停損距離大')).toBeTruthy()
+  fireEvent.change(screen.getByRole('combobox', { name: '其他狀態' }), { target: { value: 'HOLD' } })
+  expect(screen.getByRole('link', { name: /1104/ })).toBeTruthy()
+  expect(screen.queryByRole('link', { name: /2330/ })).toBeNull()
   client.clear()
 })

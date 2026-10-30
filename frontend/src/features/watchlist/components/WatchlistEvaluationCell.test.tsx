@@ -91,3 +91,15 @@ it('行情摘要優先使用日頻日期，即使週頻日期較新', () => {
   expect(screen.getByText('行情 10/28')).toBeTruthy()
   expect(screen.queryByText('行情 10/30')).toBeNull()
 })
+
+it('顯示共用指標與停損距離警示', () => {
+  const { container } = show([{
+    ...result,
+    result: { ...result.result, state: {
+      ...result.result.state!, maDistancePct: 0.9, maSlopePct: 0.64,
+      stopDistancePct: -2.1, largeStopDistance: true,
+    } },
+  }])
+  expect(container.textContent).toContain('距月線 +0.9%｜月線斜率 +0.64%／5 日｜停損距離 -2.1%')
+  expect(screen.getByText('停損距離大').className).toBe('status-badge status-warning')
+})

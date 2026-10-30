@@ -22,7 +22,7 @@ def test_high_death_cross_threshold(previous, current, expected):
     result = get_condition('kd_high_death_cross')().evaluate(bars, {})
     assert result.is_met is expected
     assert result.indicators['prev_k'] == pytest.approx(previous)
-    assert set(result.indicators) == {'k', 'd', 'prev_k'}
+    assert set(result.indicators) == {'k', 'd', 'prev_k', 'threshold'}
     assert '高檔死亡交叉' in result.reason
 
 

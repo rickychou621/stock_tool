@@ -25,6 +25,10 @@ class ScanMatchSchema(CamelModel):
     is_notified: bool
     reasons: list[str]
     state: str
+    ma_distance_pct: float | None = None
+    ma_slope_pct: float | None = None
+    stop_distance_pct: float | None = None
+    large_stop_distance: bool = False
 
 
 class ScanIssueSchema(CamelModel):

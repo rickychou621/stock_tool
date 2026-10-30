@@ -186,7 +186,7 @@ def test_scan_entry_roles(
         assert set(candidate["indicators"]) == {
             "ma_rising.ma", "ma_rising.ma_prev", "ma_rising.slope", "ma_rising.slope_pct",
             "price_touch_ma.ma", "price_touch_ma.low", "price_touch_ma.close",
-            "price_touch_ma.distance",
+            "price_touch_ma.distance", "protective_stop.stop_distance_pct",
         }
         exit_ma = sum(b.close for b in sample[-exit_period:]) / exit_period
         assert (sample[-1].close < exit_ma) == (exit_period == 35)
