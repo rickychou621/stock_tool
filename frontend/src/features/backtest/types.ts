@@ -9,6 +9,8 @@ export interface Metrics {
   winRate: number | null
   averageReturn: number | null
   compoundReturn: number | null
+  excessReturnMedian?: number | null
+  maxDrawdownSampleCount?: number
   maxDrawdownMedian?: number | null
   maxDrawdownMax?: number | null
   maxDrawdownMaxTicker?: string | null
@@ -47,6 +49,7 @@ export interface StockPerformance extends Performance {
 export interface Report {
   task: null | {
     costSnapshot: CostSnapshot | null
+    tickers: string[]
     batchId: string
     status: string
     startDate: string
@@ -57,8 +60,9 @@ export interface Report {
     failed: number
     errors: { ticker: string | null; reason: string }[]
   }
+  scopeDiff: { added: string[]; removed: string[] } | null
   staleInfo: { reason: 'definition' | 'data'; changedAt: string | null; ruleIds: number[] } | null
-  overall: (Performance & { stockCount: number; stale: boolean })[]
+  overall: (Performance & { stockCount: number; stale: boolean; evaluationFrequency: string })[]
   stocks: StockPerformance[]
 }
 export interface Trade {

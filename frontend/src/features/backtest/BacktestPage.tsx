@@ -33,7 +33,16 @@ const states: Record<string, string> = {
   not_met: '未符合',
 }
 const statusLabels = { closed: '已完成', open: '持有中', unfilled: '未成交' }
-const metricHeaders = ['交易次數', '淨勝率', '平均淨報酬', '淨複利報酬', '淨最大回撤', '淨獲利因子', '超額報酬（vs 0050）']
+const metricHeaders = ['交易次數', '淨勝率（全部交易）', '平均淨報酬', '淨複利報酬', '淨最大回撤', '淨獲利因子', '超額報酬（vs 0050）']
+const metricTitles: Record<string, string> = {
+  '交易次數': '已完成交易筆數；整體列合計所有股票',
+  '淨勝率（全部交易）': '所有股票的交易合併計算',
+  '平均淨報酬': '已完成交易淨報酬的算術平均；整體列合併所有股票交易',
+  '淨複利報酬': '個股：已完成交易淨報酬連乘；整體列：各股淨複利中位數',
+  '淨最大回撤': '已完成交易累積淨值自高點的最大跌幅；整體列僅納入交易 ≥ 3 筆的股票，至少需 5 檔',
+  '淨獲利因子': '獲利交易淨報酬總和 ÷ 虧損交易淨報酬總和絕對值；整體列合併所有股票交易',
+  '超額報酬（vs 0050）': '整體列：各股超額報酬中位數；個股列：淨複利 − 同期 0050',
+}
 function CostInfo({ costs }: { costs: CostSnapshot | null }) {
   if (!costs) return <p className="backtest-warning">舊結果未記錄成本，需重新回測。</p>
   return <p className="muted">本次成本：買賣手續費各 {(costs.feeRate * 100).toFixed(4)}% × {costs.feeDiscount}；
@@ -41,7 +50,7 @@ function CostInfo({ costs }: { costs: CostSnapshot | null }) {
 }
 function MetricCells({ metrics: m, benchmarkBuyHoldReturn, overall = false }: { metrics: Metrics; benchmarkBuyHoldReturn: number | null; overall?: boolean }) {
   if (m.tradeCount === 0) return <td className="muted" colSpan={metricHeaders.length}>期間內無訊號</td>
-  const excess = m.compoundReturn === null || benchmarkBuyHoldReturn === null
+  const excess = overall ? m.excessReturnMedian ?? null : m.compoundReturn === null || benchmarkBuyHoldReturn === null
     ? null : m.compoundReturn - benchmarkBuyHoldReturn
   return (
     <>
@@ -53,7 +62,9 @@ function MetricCells({ metrics: m, benchmarkBuyHoldReturn, overall = false }: { 
       <td>{percent(m.averageReturn)}</td>
       <td>{percent(m.compoundReturn)}</td>
       <td>{overall
-        ? <>中位數 {percent(m.maxDrawdownMedian)}／最大 {percent(m.maxDrawdownMax)}{m.maxDrawdownMaxTicker && `（${m.maxDrawdownMaxTicker}${m.maxDrawdownMaxName ? ` ${m.maxDrawdownMaxName}` : ''}）`}</>
+        ? (m.maxDrawdownSampleCount != null && m.maxDrawdownSampleCount < 5)
+          ? <>樣本不足（交易 ≥ 3 筆的股票只有 {m.maxDrawdownSampleCount} 檔）</>
+          : <>中位數 {percent(m.maxDrawdownMedian)}／最大 {percent(m.maxDrawdownMax)}{m.maxDrawdownMaxTicker && `（${m.maxDrawdownMaxTicker}${m.maxDrawdownMaxName ? ` ${m.maxDrawdownMaxName}` : ''}）`}</>
         : percent(m.maxDrawdown)}</td>
       <td>{!m.tradeCount ? '無資料' : m.noLosses ? '無虧損' : m.profitFactor?.toFixed(2) ?? '無資料'}</td>
       <td>{excess === null ? '—' : `${excess > 0 ? '+' : ''}${percent(excess)}`}</td>
@@ -221,6 +232,7 @@ export function BacktestPage() {
   const ids = (chosen ?? active.map((r) => r.id)).filter((id) => active.some((r) => r.id === id))
   const staleInfo = report.data?.staleInfo
   const staleRuleIds = (staleInfo?.ruleIds ?? []).filter((id) => active.some((r) => r.id === id))
+  const scopeDiff = report.data?.scopeDiff
   const task = report.data?.task
   const stocks = report.data?.stocks ?? []
   const visible = stocks
@@ -239,6 +251,17 @@ export function BacktestPage() {
   return (
     <section className="backtest-page">
       <PageHeader title="戰法回測" description="以最近三年的歷史訊號與模擬交易，檢視戰法表現。" />
+      {scopeDiff && (
+        <div className="backtest-stale-banner" role="status"
+          title={`新增：${scopeDiff.added.join('、') || '無'}；移除：${scopeDiff.removed.join('、') || '無'}`}>
+          <span>觀察清單已變更（新增 {scopeDiff.added.length} 檔、移除 {scopeDiff.removed.length} 檔），結果可能不完整</span>
+          <button className="button-primary"
+            disabled={running || start.isPending || !ids.length}
+            onClick={() => start.mutate(ids)}>
+            <FontAwesomeIcon icon={faPlay} />重新回測
+          </button>
+        </div>
+      )}
       {staleInfo && (
         <div className="backtest-stale-banner" role="status">
           <span>{staleInfo.reason === 'definition' && staleInfo.changedAt
@@ -273,7 +296,7 @@ export function BacktestPage() {
           </div>
         </fieldset>
         {rules.isError && <p className="error-text">戰法讀取失敗。</p>}
-        <p className="muted">範圍為目前觀察清單；與每日排程設定分開。關閉頁面仍會繼續執行。</p>
+        <p className="muted">執行範圍為目前觀察清單；結果範圍以執行當時清單為準；與每日排程設定分開。關閉頁面仍會繼續執行。</p>
         <button
           className="button-primary"
           disabled={!ids.length || running || start.isPending || report.isLoading || report.isError}
@@ -324,8 +347,9 @@ export function BacktestPage() {
       <div className="card backtest-notes">
         <p>訊號後下一有效交易日開盤成交；淨報酬包含買賣手續費與賣出證交稅。未模擬最低手續費 20 元、滑價或當沖稅率，也不額外將股利再投入。</p>
         <p>
-          0050 為不扣成本的還原報酬，超額報酬為淨報酬減 0050。複利報酬與最大回撤僅依已完成交易計算，不含持倉期間浮動損益。跨股票複利僅供比較，不是實際投資組合績效。
+          0050 為不扣成本的還原報酬，超額報酬為淨報酬減 0050。複利報酬與最大回撤僅依已完成交易計算，不含持倉期間浮動損益。整體淨複利為各股淨複利中位數，超額報酬為各股「淨複利 − 同期 0050」的中位數，均不是實際投資組合績效。
         </p>
+        <p>整體回撤僅統計已完成交易 ≥ 3 筆的股票；不足 5 檔時不顯示中位數與最大值。摘要勝率為各股淨勝率中位數，至少需 30 筆交易且 10 檔有交易；表格勝率、平均淨報酬與獲利因子合併全部已完成交易計算。</p>
         <p>少於 10 筆已完成交易標示樣本不足；上市較晚或需較長指標暖機的股票，實際期間可能較短。</p>
         <p>還原價格已依證交所與櫃買中心公告的分割、減資事件調整。</p>
       </div>
@@ -337,7 +361,7 @@ export function BacktestPage() {
               const summary = summarizeRule(stocks, ruleId)
               const benchmark = report.data?.overall.find((row) => row.ruleId === ruleId)?.benchmarkBuyHoldReturn
               return <p key={ruleId}>{ruleName}：{summary.stockCount} 檔中 {summary.signalStockCount} 檔有訊號，共 {summary.tradeCount} 筆交易；{summary.beatBenchmarkCount} 檔贏過同期 0050{benchmark != null && `（${percent(benchmark)}）`}。{summary.sampleSufficient
-                ? `中位數淨勝率 ${percent(summary.medianWinRate)}。`
+                ? `各股淨勝率中位數 ${percent(summary.medianWinRate)}。`
                 : '樣本不足，勝率僅供參考。'}</p>
             })}
             <p className="muted">
@@ -349,7 +373,7 @@ export function BacktestPage() {
                   <tr>
                     <th>戰法／股票數</th>
                     {metricHeaders.map((h) => (
-                      <th key={h} title={h === '超額報酬（vs 0050）' ? '淨複利報酬 − 同期 0050 買進持有' : undefined}>{h === '淨複利報酬' ? '個股淨複利中位數' : h}</th>
+                      <th key={h} title={metricTitles[h]}>{h === '淨複利報酬' ? '個股淨複利中位數' : h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -361,6 +385,7 @@ export function BacktestPage() {
                         {r.stale && <span className="stale-mark" title="結果已過期，請重新回測。"><FontAwesomeIcon icon={faTriangleExclamation} /></span>}
                         <small>{r.stockCount} 檔</small>
                         <small>{r.actualStart}～{r.actualEnd}</small>
+                        {r.evaluationFrequency === 'weekly' && <small className="muted">每週最後一個交易日評估，結束日可能早於日頻戰法</small>}
                       </td>
                       <MetricCells overall metrics={r.metrics} benchmarkBuyHoldReturn={r.benchmarkBuyHoldReturn} />
                     </tr>
@@ -387,7 +412,7 @@ export function BacktestPage() {
                   {[...new Map(stocks.map((s) => [s.ticker, s.stockName])).entries()].map(
                     ([t, n]) => (
                       <option key={t} value={t}>
-                        {t} {n}
+                        {t} {n}{scopeDiff?.removed.includes(t) && '（已移出觀察清單）'}
                       </option>
                     ),
                   )}
@@ -432,7 +457,7 @@ export function BacktestPage() {
                   <tr>
                     <th>股票／戰法</th>
                     {metricHeaders.map((h) => (
-                      <th key={h} title={h === '超額報酬（vs 0050）' ? '淨複利報酬 − 同期 0050 買進持有' : undefined}>{h}</th>
+                      <th key={h} title={metricTitles[h]}>{h}</th>
                     ))}
                   </tr>
                 </thead>

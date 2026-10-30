@@ -490,7 +490,9 @@ def test_report_legacy_results_excluded_from_overall(factory):
 
 def test_report_without_task_has_no_stale_info(factory):
     with factory() as db:
-        assert read_report(db) == dict(task=None, stocks=[], overall=[], staleInfo=None)
+        assert read_report(db) == dict(
+            task=None, stocks=[], overall=[], staleInfo=None, scopeDiff=None
+        )
 
 
 def test_stale_info_prioritizes_definition_and_latest_changed_rule(factory):
@@ -597,37 +599,80 @@ def test_detail_equity_curve_and_markers_ignore_pagination(factory, benchmark_ki
         app.dependency_overrides.clear()
 
 
-@pytest.mark.parametrize("net_values", [(0.1, 0.2), (None, 0.2), (None, None)])
-def test_overall_drawdown_uses_stock_median_and_max(factory, net_values):
+
+def test_scope_diff_compares_active_watchlist_with_task(factory):
+    manager = make_manager(factory)
+    manager.start([1], now=NOW)
+    manager.close()
+    with factory() as db:
+        assert read_report(db)["scopeDiff"] is None
+        item = db.scalar(select(HoldingsWatchlist).where(HoldingsWatchlist.ticker == "1"))
+        item.is_active = False
+        db.add(Stock(ticker="3", name="Stock 3", market="上市"))
+        db.add(HoldingsWatchlist(ticker="3"))
+        db.commit()
+        report = read_report(db)
+        assert report["scopeDiff"] == dict(added=["3"], removed=["1"])
+        assert sorted(report["task"]["tickers"]) == ["1", "2"]
+        assert {s["ticker"] for s in report["stocks"]} == {"1", "2"}
+
+
+@pytest.mark.parametrize("sample_count", [2, 5])
+def test_overall_drawdown_filters_short_histories(factory, sample_count):
+    with factory() as db:
+        for i in range(3, 8):
+            db.add(Stock(ticker=str(i), name=f"Stock {i}", market="上市"))
+            db.add(HoldingsWatchlist(ticker=str(i)))
+        db.commit()
+    manager = make_manager(factory)
+    manager.start([1], now=NOW)
+    manager.close()
+    with factory() as db:
+        for row in db.scalars(select(BacktestResult)):
+            summary = copy.deepcopy(row.summary)
+            i = int(row.ticker)
+            for key, factor in [("metrics", 0.1), ("grossMetrics", 0.05)]:
+                summary[key]["tradeCount"] = 3 if i <= sample_count else 2
+                summary[key]["maxDrawdown"] = i * factor
+            row.summary = summary
+        db.commit()
+        group, = read_report(db)["overall"]
+        for key, factor in [("metrics", 0.1), ("grossMetrics", 0.05)]:
+            result = group[key]
+            assert result["maxDrawdownSampleCount"] == sample_count
+            if sample_count < 5:
+                assert all(result[k] is None for k in (
+                    "maxDrawdown", "maxDrawdownMedian", "maxDrawdownMax",
+                    "maxDrawdownMaxTicker", "maxDrawdownMaxName",
+                ))
+            else:
+                assert result["maxDrawdownMedian"] == pytest.approx(3 * factor)
+                assert result["maxDrawdown"] == result["maxDrawdownMedian"]
+                assert result["maxDrawdownMax"] == pytest.approx(5 * factor)
+                assert result["maxDrawdownMaxTicker"] == "5"
+                assert result["maxDrawdownMaxName"] == "Stock 5"
+
+
+@pytest.mark.parametrize("missing", [None, "compoundReturn", "benchmarkBuyHoldReturn"])
+def test_excess_return_uses_each_stocks_benchmark(factory, missing):
     manager = make_manager(factory)
     manager.start([1], now=NOW)
     manager.close()
     with factory() as db:
         rows = list(db.scalars(select(BacktestResult).order_by(BacktestResult.ticker)))
-        for row, net, gross in zip(rows, net_values, (0.3, 0.1), strict=True):
+        for row, net, benchmark in zip(rows, [0.1, 0.5], [0.6, 0.2], strict=True):
             summary = copy.deepcopy(row.summary)
-            summary["metrics"]["maxDrawdown"] = net
-            summary["grossMetrics"]["maxDrawdown"] = gross
+            summary["metrics"]["compoundReturn"] = net
+            summary["benchmarkBuyHoldReturn"] = benchmark
+            if row.ticker == "1" and missing == "compoundReturn":
+                summary["metrics"]["compoundReturn"] = None
+            if row.ticker == "1" and missing == "benchmarkBuyHoldReturn":
+                summary["benchmarkBuyHoldReturn"] = None
             row.summary = summary
+        db.get(WatchRule, 1).evaluation_frequency = "weekly"
         db.commit()
         group, = read_report(db)["overall"]
-        net = group["metrics"]
-        if net_values == (None, None):
-            assert all(net[key] is None for key in (
-                "maxDrawdown", "maxDrawdownMedian", "maxDrawdownMax",
-                "maxDrawdownMaxTicker", "maxDrawdownMaxName",
-            ))
-        else:
-            expected = 0.15 if net_values[0] is not None else 0.2
-            assert net["maxDrawdownMedian"] == pytest.approx(expected)
-            assert net["maxDrawdown"] == net["maxDrawdownMedian"]
-            assert net["maxDrawdownMax"] == 0.2
-            assert net["maxDrawdownMaxTicker"] == rows[1].ticker
-            assert net["maxDrawdownMaxName"] == rows[1].stock_name
-            assert net["maxDrawdown"] <= net["maxDrawdownMax"]
-        gross = group["grossMetrics"]
-        assert gross["maxDrawdown"] == gross["maxDrawdownMedian"] == pytest.approx(0.2)
-        assert gross["maxDrawdownMax"] == 0.3
-        assert gross["maxDrawdownMaxTicker"] == rows[0].ticker
-        assert gross["maxDrawdownMaxName"] == rows[0].stock_name
-        assert "drawdowns" not in group and "grossDrawdowns" not in group
+        assert group["metrics"]["excessReturnMedian"] == pytest.approx(
+            0.3 if missing else -0.1
+        )
+        assert group["evaluationFrequency"] == "weekly"

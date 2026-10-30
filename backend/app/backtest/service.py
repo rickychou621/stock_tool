@@ -369,9 +369,13 @@ def median_or_none(values):
 
 
 def drawdown_summary(values):
-    largest = max(values, key=lambda item: item[0]) if values else (None, None, None)
-    median = median_or_none([item[0] for item in values])
+    values = [item for item in values if item[3] >= 3]
+    sample_count = len(values)
+    eligible = values if sample_count >= 5 else []
+    largest = max(eligible, key=lambda item: item[0]) if eligible else (None, None, None)
+    median = median_or_none([item[0] for item in eligible])
     return dict(
+        maxDrawdownSampleCount=sample_count,
         maxDrawdown=median,
         maxDrawdownMedian=median,
         maxDrawdownMax=largest[0],
@@ -383,7 +387,18 @@ def drawdown_summary(values):
 def read_report(db):
     task = db.get(BacktestTask, 1)
     if task is None:
-        return dict(task=None, overall=[], stocks=[], staleInfo=None)
+        return dict(task=None, overall=[], stocks=[], staleInfo=None, scopeDiff=None)
+    active_tickers = set(db.scalars(
+        select(HoldingsWatchlist.ticker).where(HoldingsWatchlist.is_active.is_(True))
+    ))
+    task_tickers = set(task.tickers)
+    scope_diff = (
+        dict(
+            added=sorted(active_tickers - task_tickers),
+            removed=sorted(task_tickers - active_tickers),
+        )
+        if active_tickers != task_tickers else None
+    )
     rows = list(
         db.scalars(
             select(BacktestResult)
@@ -462,6 +477,11 @@ def read_report(db):
                     actualStart=p["actualStart"],
                     actualEnd=p["actualEnd"],
                     trades=[],
+                    excessReturns=[],
+                    evaluationFrequency=(
+                        getattr(current_rules.get(row.rule_id), "evaluation_frequency", None)
+                        or "daily"
+                    ),
                     compounds=[],
                     grossCompounds=[],
                     drawdowns=[],
@@ -475,6 +495,10 @@ def read_report(db):
             group["trades"].extend(p["trades"])
             if p["metrics"].get("compoundReturn") is not None:
                 group["compounds"].append(p["metrics"]["compoundReturn"])
+            compound = p["metrics"].get("compoundReturn")
+            benchmark = p.get("benchmarkBuyHoldReturn")
+            if compound is not None and benchmark is not None:
+                group["excessReturns"].append(compound - benchmark)
             gross_compound = p.get("grossMetrics", p["metrics"]).get("compoundReturn")
             if gross_compound is not None:
                 group["grossCompounds"].append(gross_compound)
@@ -483,7 +507,9 @@ def read_report(db):
             ):
                 drawdown = p.get(metric_key, p["metrics"]).get("maxDrawdown")
                 if drawdown is not None:
-                    group[group_key].append((drawdown, row.ticker, row.stock_name))
+                    group[group_key].append(
+                        (drawdown, row.ticker, row.stock_name, p["metrics"]["tradeCount"])
+                    )
     overall = []
     for group in grouped.values():
         overall.append(
@@ -491,13 +517,15 @@ def read_report(db):
                 **{
                     k: v for k, v in group.items()
                     if k not in (
-                        "trades", "compounds", "grossCompounds", "drawdowns", "grossDrawdowns"
+                        "trades", "compounds", "grossCompounds", "drawdowns", "grossDrawdowns",
+                        "excessReturns"
                     )
                 },
                 # Chaining every stock's trades into one compound is meaningless across
                 # stocks; report the median of per-stock compound returns instead.
                 "metrics": {
                     **metrics(group["trades"]),
+                    "excessReturnMedian": median_or_none(group["excessReturns"]),
                     "compoundReturn": median_or_none(group["compounds"]),
                     **drawdown_summary(group["drawdowns"]),
                 },
@@ -532,6 +560,7 @@ def read_report(db):
     )
     return dict(
         staleInfo=stale_info,
+        scopeDiff=scope_diff,
         task=dict(
             batchId=task.batch_id,
             status=task.status,
@@ -542,6 +571,7 @@ def read_report(db):
             startDate=task.start_date.isoformat(),
             endDate=task.end_date.isoformat(),
             ruleIds=task.rule_ids,
+            tickers=task.tickers,
             total=task.total,
             completed=task.succeeded + task.failed,
             succeeded=task.succeeded,
