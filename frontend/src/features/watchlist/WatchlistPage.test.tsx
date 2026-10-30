@@ -125,10 +125,22 @@ it.each([null, completedRun])('沒有錯誤時排程預設收合，仍可手動�
   const summary = screen.getByText('每日自動更新').closest('summary')!
   const details = summary.parentElement as HTMLDetailsElement
   expect(details.open).toBe(false)
-  if (run) expect(within(summary).getByText(/最近一次：完成/)).toBeTruthy()
-  else expect(within(summary).queryByText(/最近一次：/)).toBeNull()
+  if (run) {
+    expect(within(summary).getByText('最近一次自動更新：完成 · 2026/10/26 18:00')).toBeTruthy()
+    expect(within(summary).queryByText(/最近一次手動評估/)).toBeNull()
+  } else expect(within(summary).queryByText(/最近一次自動更新/)).toBeNull()
   fireEvent.click(summary)
   expect(details.open).toBe(true)
+})
+
+it('手動評估晚於自動更新時另外顯示手動評估時間', async () => {
+  setup(completedRun, false, false, [
+    { ...evaluations[0], evaluatedAt: '2026-10-27T05:30:00Z' },
+    ...evaluations.slice(1),
+  ])
+  const summary = (await screen.findByText('每日自動更新')).closest('summary')!
+  expect(await within(summary).findByText('最近一次手動評估：2026/10/27 13:30')).toBeTruthy()
+  expect(within(summary).getByText(/最近一次自動更新：完成/)).toBeTruthy()
 })
 
 it.each([

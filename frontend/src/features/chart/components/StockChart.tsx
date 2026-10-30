@@ -142,6 +142,9 @@ export function StockChart({
       borderDownColor: DOWN_COLOR,
       wickUpColor: UP_COLOR,
       wickDownColor: DOWN_COLOR,
+      // 右側刻度上的現價標籤會蓋住刻度文字，現價改由價格線＋圖例表示
+      lastValueVisible: false,
+      priceLineVisible: false,
     })
     const candleData = bars.map((bar) => ({
       time: bar.date as Time,
@@ -364,8 +367,20 @@ export function StockChart({
     const series = candleSeriesRef.current
     if (!series) return
     priceLinesRef.current.forEach((line) => series.removePriceLine(line))
-    priceLinesRef.current = (priceLines ?? []).map((line) => series.createPriceLine({
-      price: line.price, color: line.color, title: '', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true,
+    const last = bars[bars.length - 1]
+    const lines = [
+      ...(last ? [{
+        price: last.close,
+        color: last.close >= last.open ? UP_COLOR : DOWN_COLOR,
+        lineStyle: LineStyle.Dotted,
+      }] : []),
+      ...(priceLines ?? []).map((line) => ({
+        price: line.price, color: line.color, lineStyle: LineStyle.Dashed,
+      })),
+    ]
+    // 不在右側刻度畫標籤，避免遮住刻度文字；數值寫在上方圖例
+    priceLinesRef.current = lines.map((line) => series.createPriceLine({
+      ...line, title: '', lineWidth: 1, axisLabelVisible: false,
     }))
   }, [bars, priceLines])
 
@@ -410,7 +425,8 @@ export function StockChart({
     macdSeriesRef.current.histogram?.applyOptions({ visible: showMacd })
   }, [subPanelIndicator])
 
-  const isLatest = date === bars[bars.length - 1]?.date.replaceAll('-', '/')
+  const lastBar = bars[bars.length - 1]
+  const isLatest = date === lastBar?.date.replaceAll('-', '/')
   const isUp = ohlcInfo ? ohlcInfo.close >= ohlcInfo.open : true
 
   return (
@@ -424,9 +440,12 @@ export function StockChart({
           <span>收 {ohlcInfo.close}</span>
         </div>
       )}
-      {!!priceLines?.length && (
-        <div className="chart-info-line" aria-label="觸價線圖例">
-          {priceLines.map((line, index) => (
+      {lastBar && (
+        <div className="chart-info-line" aria-label="價格線圖例">
+          <span style={{ color: lastBar.close >= lastBar.open ? UP_COLOR : DOWN_COLOR }}>
+            ┈ 現價 {lastBar.close.toFixed(2)}
+          </span>
+          {(priceLines ?? []).map((line, index) => (
             <span key={index} style={{ color: line.color }}>
               — {line.ruleName} 觸價 {line.price.toFixed(2)}
             </span>

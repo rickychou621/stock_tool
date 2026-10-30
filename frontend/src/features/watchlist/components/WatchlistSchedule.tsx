@@ -1,6 +1,6 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faFloppyDisk } from '@fortawesome/free-solid-svg-icons'
-import { formatTaipeiTime } from '../../../lib/time'
+import { formatTaipeiTime, parseUtcTime } from '../../../lib/time'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '../../../api/client'
@@ -32,7 +32,13 @@ const statuses: Record<string, string> = {
   failed: '失敗',
 }
 
-export function WatchlistSchedule({ rules }: { rules: WatchRule[] | undefined }) {
+export function WatchlistSchedule({
+  rules,
+  lastEvaluatedAt,
+}: {
+  rules: WatchRule[] | undefined
+  lastEvaluatedAt?: string | null
+}) {
   const client = useQueryClient()
   const [draft, setDraft] = useState<Settings | null>(null)
   const settings = useQuery({
@@ -54,6 +60,12 @@ export function WatchlistSchedule({ rules }: { rules: WatchRule[] | undefined })
   })
   const value = draft ?? settings.data
   const run = latest.data
+  // 自動更新也會寫評估時間；比自動更新結束還晚的才是手動評估
+  const manualAt =
+    lastEvaluatedAt &&
+    (!run || parseUtcTime(lastEvaluatedAt) > parseUtcTime(run.finishedAt ?? run.startedAt))
+      ? lastEvaluatedAt
+      : null
   const change = (next: Settings) => {
     setDraft(next)
     save.reset()
@@ -70,9 +82,10 @@ export function WatchlistSchedule({ rules }: { rules: WatchRule[] | undefined })
         </span>
         {run && (
           <span className="muted">
-            最近一次：{statuses[run.status] ?? run.status} · {formatTaipeiTime(run.startedAt)}
+            最近一次自動更新：{statuses[run.status] ?? run.status} · {formatTaipeiTime(run.startedAt)}
           </span>
         )}
+        {manualAt && <span className="muted">最近一次手動評估：{formatTaipeiTime(manualAt)}</span>}
       </summary>
       <p className="muted">台灣交易日 18:00 更新觀察清單，再評估所選戰法。</p>
       {settings.isError && (

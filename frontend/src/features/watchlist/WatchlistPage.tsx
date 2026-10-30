@@ -8,6 +8,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '../../api/client'
 import type { WatchRule } from '../rules/types'
+import { parseUtcTime } from '../../lib/time'
 import { WatchlistSchedule } from './components/WatchlistSchedule'
 import { WatchlistTable } from './components/WatchlistTable'
 import { AddWatchlistForm } from './components/AddWatchlistForm'
@@ -200,7 +201,13 @@ export function WatchlistPage() {
       <p className="muted">
         新增或進入清單不會自動評估。前往<Link to="/matches">今日符合戰法清單</Link>掃描新機會。
       </p>
-      <WatchlistSchedule rules={rules.data} />
+      <WatchlistSchedule
+        rules={rules.data}
+        lastEvaluatedAt={saved.data?.reduce<string | null>(
+          (latest, e) => (!latest || parseUtcTime(e.evaluatedAt) > parseUtcTime(latest) ? e.evaluatedAt : latest),
+          null,
+        )}
+      />
       <div className="card">
         <fieldset disabled={busy}>
           <legend>評估戰法（可複選）</legend>

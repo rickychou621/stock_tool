@@ -17,7 +17,7 @@ const mock = vi.hoisted(() => {
 })
 vi.mock('lightweight-charts', () => ({
   CandlestickSeries: 'candle', LineSeries: 'line', HistogramSeries: 'histogram',
-  LineStyle: { Dashed: 2 }, createChart: mock.createChart,
+  LineStyle: { Dotted: 1, Dashed: 2 }, createChart: mock.createChart,
   createSeriesMarkers: () => ({ setMarkers: mock.setMarkers }),
 }))
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals() })
@@ -35,10 +35,16 @@ function browserMocks() {
 it('更新觸價與歷史標記不重建圖表，排除範圍外、其他狀態及同日重複標記', () => {
   browserMocks()
   const view = render(<StockChart {...props} priceLines={[{ price: 98, title: '', ruleName: '戰法二', color: '#991b1b' }]} />)
-  expect(mock.candles.createPriceLine).toHaveBeenCalledWith(expect.objectContaining({
-    title: '', axisLabelVisible: true, price: 98,
+  expect(mock.chart.addSeries).toHaveBeenCalledWith('candle', expect.objectContaining({
+    lastValueVisible: false, priceLineVisible: false,
   }))
-  expect(screen.getByLabelText('觸價線圖例').textContent).toContain('— 戰法二 觸價 98.00')
+  expect(mock.candles.createPriceLine).toHaveBeenCalledWith(expect.objectContaining({
+    axisLabelVisible: false, price: 101,
+  }))
+  expect(mock.candles.createPriceLine).toHaveBeenCalledWith(expect.objectContaining({
+    axisLabelVisible: false, price: 98,
+  }))
+  expect(screen.getByLabelText('價格線圖例').textContent).toBe('┈ 現價 101.00— 戰法二 觸價 98.00')
   const oldLine = mock.candles.createPriceLine.mock.results[0].value
   view.rerender(<StockChart {...props} priceLines={[]} markers={[
     { date: '2026-10-23', state: 'EXIT', ruleName: '二' },
