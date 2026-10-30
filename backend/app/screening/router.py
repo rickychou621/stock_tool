@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db
+from app.rules.freshness import latest_trading_days
 from app.screening.candidate_service import CandidatePoolService
 from app.screening.jobs import ScanBusy, manager
 from app.screening.schemas import (
@@ -54,6 +55,8 @@ def run_screening_scan() -> ScanJobStartedSchema:
 
 
 @router.get("/run/latest", response_model=ScanJobSchema | None)
-def latest_screening_scan() -> ScanJobSchema | None:
+def latest_screening_scan(db: Session = Depends(get_db)) -> ScanJobSchema | None:
     job = manager.latest()
-    return ScanJobSchema(**asdict(job)) if job else None
+    if job is None:
+        return None
+    return ScanJobSchema(**asdict(job), latest_market_date=latest_trading_days(db)[0])

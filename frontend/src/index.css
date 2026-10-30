@@ -403,6 +403,11 @@ button:disabled {
   background: var(--warning-soft);
   color: var(--warning);
 }
+p.status-warning {
+  margin-left: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
 .rule-condition { margin: 4px 0; }
 .rule-condition small { display: block; margin-top: 2px; }
 .status-error {

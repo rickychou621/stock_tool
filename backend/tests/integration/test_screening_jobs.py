@@ -12,6 +12,7 @@ from app.screening.scan_service import ScanSummary, ScreeningScanService
 
 @pytest.fixture
 def manager(monkeypatch):
+    monkeypatch.setattr(router, "latest_trading_days", lambda db: (None, []))
     manager = ScanJobManager(session_factory=lambda: nullcontext(None))
     monkeypatch.setattr(router, "manager", manager)
     monkeypatch.setattr("app.main.screening_manager", manager)
@@ -45,7 +46,7 @@ def test_running_job_returns_progress_and_rejects_second_start(manager, monkeypa
             job_id = response.json()["jobId"]
             assert client.get("/screening/run/latest").json() == {
                 "jobId": job_id, "status": "running", "done": 1, "total": 2,
-                "summary": None, "error": None,
+                "summary": None, "error": None, "latestMarketDate": None,
             }
             busy = client.post("/screening/run")
             assert busy.status_code == 409

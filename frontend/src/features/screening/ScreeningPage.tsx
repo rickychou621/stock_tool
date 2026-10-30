@@ -20,6 +20,9 @@ import { useEffect, useState } from 'react'
 import { STATE_LABELS, STATE_URGENCY, type RuleStateCode } from '../rules/state'
 import type { ScanJob, ScanSummary, TodayMatchItem, NotificationSummary } from './types'
 
+import type { SavedEvaluation, WatchlistItem } from '../watchlist/types'
+import { getSyncHint } from './syncHint'
+
 const FILTER_STATES: RuleStateCode[] = ['ENTRY', 'NEAR_EXIT', 'HOLD', 'STALE']
 
 export function ScreeningPage() {
@@ -29,6 +32,19 @@ export function ScreeningPage() {
     queryKey: ['alerts', { todayOnly: true }],
     queryFn: () => apiClient.get<TodayMatchItem[]>('/alerts?today_only=true&limit=50'),
   })
+  const watchlist = useQuery({
+    queryKey: ['watchlist'],
+    queryFn: () => apiClient.get<WatchlistItem[]>('/watchlist?limit=500'),
+  })
+  const saved = useQuery({
+    queryKey: ['saved-evaluations'],
+    queryFn: () => apiClient.get<SavedEvaluation[]>('/watchlist/evaluations'),
+  })
+  const watchlistByTicker = new Map(watchlist.data?.map((item) => [item.ticker, item.id]))
+  const evaluationsByRule = new Map(saved.data?.map((item) => [
+    `${item.itemId}:${item.ruleId}`, item,
+  ]))
+  const showWatchlist = watchlist.isSuccess && saved.isSuccess
   const snapshot = useQuery<ScanSummary | null>({
     queryKey: ['latest-scan'],
     queryFn: async () => null,
@@ -63,7 +79,7 @@ export function ScreeningPage() {
     },
     onSuccess: ({ jobId }) => {
       queryClient.setQueryData<ScanJob>(['scan-job'], {
-        jobId, status: 'running', done: 0, total: 0, summary: null, error: null,
+        latestMarketDate: null, jobId, status: 'running', done: 0, total: 0, summary: null, error: null,
       })
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['scan-job'] }),
@@ -96,6 +112,7 @@ export function ScreeningPage() {
   })
   const scanning = scanMutation.isPending || scanJob.data?.status === 'running'
   const scan = snapshot.data
+  const syncHint = getSyncHint(scan?.baselineDate, scanJob.data?.latestMarketDate, new Date())
   const matches = scan?.matches ?? []
   const pendingMatches = matches.filter(
     (m) => m.id !== null && !m.isNotified && m.state === 'ENTRY',
@@ -193,6 +210,7 @@ export function ScreeningPage() {
           <p className="muted">
             基準日 {scan.baselineDate ?? '—'}・掃描時間 {formatTaipeiTime(scan.finishedAt).replace(/^\d{4}\//, '')}
           </p>
+          {syncHint && <p className={syncHint.className}>{syncHint.message}</p>}
           <p className="muted">
             進場定義：今天符合且前一個有效交易日不符合，與全市場掃描相同。差異：本頁只檢查已同步行情的 {scan.stocksScanned} 檔；全市場掃描涵蓋上市櫃全部標的。行情過期的股票本頁列為「行情過期」，不算進場。
           </p>
@@ -251,7 +269,12 @@ export function ScreeningPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleMatches.map((item, index) => (
+                  {visibleMatches.map((item, index) => {
+                    const watchId = watchlistByTicker.get(item.ticker)
+                    const evaluation = evaluationsByRule.get(`${watchId}:${item.ruleId}`)
+                    const watchState = evaluation?.result.state?.state
+                    const differs = watchState && watchState !== item.state
+                    return (
                     <tr key={item.id ?? `${item.ticker}-${item.ruleName}-${item.state}-${index}`}>
                       <td>
                         <Link to={`/chart?ticker=${item.ticker}`} state={{ from: '/matches' }}>
@@ -267,6 +290,18 @@ export function ScreeningPage() {
                           />
                         ) : (
                           item.ruleName
+                        )}
+                        {showWatchlist && watchId !== undefined && (
+                          <p
+                            className={differs ? 'status-warning' : 'muted'}
+                            title={differs
+                              ? `兩頁使用的行情日期不同：今日清單 ${item.dataDate}，觀察清單 ${evaluation?.result.dataDate}`
+                              : undefined}
+                          >
+                            <small>{evaluation && watchState
+                              ? `觀察清單：${STATE_LABELS[watchState]}（${formatDataDate(evaluation.result.dataDate, evaluation.evaluationFrequency, 'MM/DD')}）`
+                              : '觀察清單：尚未評估'}</small>
+                          </p>
                         )}
                         <p className="muted">
                           <small>{item.reason}</small>
@@ -300,7 +335,8 @@ export function ScreeningPage() {
                         <AddToWatchlistButton ticker={item.ticker} />
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

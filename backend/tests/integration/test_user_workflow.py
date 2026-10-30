@@ -84,11 +84,13 @@ def run_scan(client):
 
 
 def test_scan_only_returns_matches_and_never_sends_telegram(context):
-    client, db, _, sent = context
+    client, db, rule_id, sent = context
     started = datetime.now(UTC)
     payload = run_scan(client)
     latest_date = db.scalar(select(func.max(StockPriceDaily.trade_date)))
     assert payload["baselineDate"] == latest_date.isoformat()
+    assert payload["matches"][0]["ruleId"] == rule_id
+    assert client.get("/screening/run/latest").json()["latestMarketDate"] == latest_date.isoformat()
     assert payload["finishedAt"] is not None
     assert started <= datetime.fromisoformat(payload["finishedAt"]) <= datetime.now(UTC)
     assert payload["stocksScanned"] == 3
@@ -639,3 +641,16 @@ def test_screening_weekly_rule_uses_last_friday_as_fresh(context, monkeypatch):
         db.commit()
         states = {m["state"] for m in run_scan(client)["matches"] if m["ticker"] == "2330"}
         assert states == {expected}
+
+
+def test_latest_scan_reads_current_market_date_without_rescanning(context):
+    client, db, _, _ = context
+    summary = run_scan(client)
+    db.add(StockPriceDaily(
+        ticker="2330", trade_date=date.today(), open=100, high=100, low=100,
+        close=100, adj_close=100, volume=1000,
+    ))
+    db.commit()
+    latest = client.get("/screening/run/latest").json()
+    assert latest["latestMarketDate"] == date.today().isoformat()
+    assert latest["summary"] == summary

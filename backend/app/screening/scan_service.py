@@ -27,6 +27,7 @@ from app.rules.state import (
 
 @dataclass
 class ScanMatch:
+    rule_id: int
     id: int | None
     ticker: str
     name: str
@@ -148,6 +149,7 @@ class ScreeningScanService:
                 # Return this scan's matches even when today's alert already exists.
                 summary.matches.append(
                     ScanMatch(
+                        rule_id=rule.id,
                         id=alert.id if alert else None,
                         state=state.state,
                         ticker=ticker,

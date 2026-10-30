@@ -11,17 +11,20 @@ const summary: ScanSummary = {
   baselineDate: '2026-10-28', finishedAt: '2026-10-29T06:05:00Z',
   rulesEvaluated: 1, stocksScanned: 2, newAlerts: 1, excluded: 0, excludedCategories: [], issues: [],
   matches: [{
-    id: 1, ticker: '2330', name: '台積電', ruleName: '戰法', state: 'ENTRY',
+    ruleId: 7, id: 1, ticker: '2330', name: '台積電', ruleName: '戰法', state: 'ENTRY',
     priceAtTrigger: 100, dataDate: '2026-10-22', isNotified: false,
     reason: '符合', reasons: ['符合'],
   }],
 }
 
-function setup(initial: ScanJob | null) {
+function setup(initial: ScanJob | null, responses: Record<string, unknown> = {}) {
   let job = initial
-  vi.spyOn(apiClient, 'get').mockImplementation(async <T,>(path: string) =>
-    (path === '/screening/run/latest' ? job : []) as T,
-  )
+  vi.spyOn(apiClient, 'get').mockImplementation(async <T,>(path: string) => {
+    if (path === '/screening/run/latest') return job as T
+    const response = responses[path]
+    if (response instanceof Error) throw response
+    return (response ?? []) as T
+  })
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const mount = () => render(
     <QueryClientProvider client={client}>
@@ -39,7 +42,7 @@ afterEach(() => {
 
 it('接回進行中的掃描，完成後顯示結果，重查與重新掛載不覆蓋通知狀態', async () => {
   const running: ScanJob = {
-    jobId: 'job-1', status: 'running', done: 1, total: 2, summary: null, error: null,
+    latestMarketDate: null, jobId: 'job-1', status: 'running', done: 1, total: 2, summary: null, error: null,
   }
   const { client, view, mount, setJob } = setup(running)
   const button = await screen.findByRole('button', { name: '掃描中… 1/2' })
@@ -64,7 +67,7 @@ it('啟動工作後顯示初始進度，背景失敗時顯示原因', async () =
   const { client, setJob } = setup(null)
   await waitFor(() => expect(apiClient.get).toHaveBeenCalledWith('/screening/run/latest'))
   const running: ScanJob = {
-    jobId: 'job-2', status: 'running', done: 0, total: 0, summary: null, error: null,
+    latestMarketDate: null, jobId: 'job-2', status: 'running', done: 0, total: 0, summary: null, error: null,
   }
   vi.spyOn(apiClient, 'post').mockImplementation(async <T,>() => {
     setJob(running)
@@ -91,7 +94,7 @@ it('顯示重複啟動時後端回傳的錯誤訊息', async () => {
 
 it('行情過期可篩選且不通知，排除文字依實際類別顯示', async () => {
   const { client } = setup({
-    jobId: 'stale', status: 'done', done: 1, total: 1, error: null,
+    latestMarketDate: null, jobId: 'stale', status: 'done', done: 1, total: 1, error: null,
     summary: {
       ...summary, excluded: 3, excludedCategories: ['futures', 'bond'],
       matches: [{ ...summary.matches[0], id: null, state: 'STALE', reason: '行情過期原因' }],
@@ -112,7 +115,7 @@ it('行情過期可篩選且不通知，排除文字依實際類別顯示', asyn
 
 it('隱藏出場卡片與篩選，顯示掃描基準與範圍說明', async () => {
   const { client } = setup({
-    jobId: 'exit', status: 'done', done: 2, total: 2, error: null,
+    latestMarketDate: null, jobId: 'exit', status: 'done', done: 2, total: 2, error: null,
     summary: { ...summary, matches: [
       ...summary.matches,
       { ...summary.matches[0], id: null, ticker: '3711', state: 'EXIT' },
@@ -131,7 +134,7 @@ it('隱藏出場卡片與篩選，顯示掃描基準與範圍說明', async () =
 
 it('掃描日期與時間缺值顯示破折號', async () => {
   const { client } = setup({
-    jobId: 'missing-time', status: 'done', done: 2, total: 2, error: null,
+    latestMarketDate: null, jobId: 'missing-time', status: 'done', done: 2, total: 2, error: null,
     summary: { ...summary, baselineDate: null, finishedAt: null },
   })
   await screen.findByText('基準日 —・掃描時間 —')
@@ -140,7 +143,7 @@ it('掃描日期與時間缺值顯示破折號', async () => {
 
 it('週頻行情顯示月 K 與計算截止日', async () => {
   const { client } = setup({
-    jobId: 'weekly', status: 'done', done: 2, total: 2, error: null,
+    latestMarketDate: null, jobId: 'weekly', status: 'done', done: 2, total: 2, error: null,
     summary: {
       ...summary,
       matches: [{ ...summary.matches[0], evaluationFrequency: 'weekly' }],
@@ -148,5 +151,45 @@ it('週頻行情顯示月 K 與計算截止日', async () => {
   })
   expect(await screen.findByText('月 K：2026/10（計算至 10/22）')).toBeTruthy()
   expect(screen.getByTitle('戰法三每週最後一個交易日收盤後更新')).toBeTruthy()
+  client.clear()
+})
+
+it.each([
+  ['HOLD', 7, '觀察清單：續抱（10/29）', 'status-warning'],
+  ['ENTRY', 7, '觀察清單：進場（10/29）', 'muted'],
+  ['HOLD', 8, '觀察清單：尚未評估', 'muted'],
+])('觀察清單依股票與戰法配對：%s / %s', async (state, ruleId, text, className) => {
+  const { client } = setup({
+    latestMarketDate: '2026-10-29',
+    jobId: 'comparison', status: 'done', done: 2, total: 2, error: null, summary,
+  }, {
+    '/watchlist?limit=500': [{ id: 10, ticker: '2330' }],
+    '/watchlist/evaluations': [
+      { itemId: 11, ruleId: 7, result: { state: { state: 'EXIT' }, dataDate: '2026-10-30' } },
+      { itemId: 10, ruleId, evaluationFrequency: 'daily', result: { state: { state }, dataDate: '2026-10-29' } },
+    ],
+  })
+  const label = await screen.findByText(text)
+  expect(label.parentElement?.className).toBe(className)
+  if (className === 'status-warning') {
+    expect(label.parentElement?.title).toBe('兩頁使用的行情日期不同：今日清單 2026-10-22，觀察清單 2026-10-29')
+  }
+  expect(screen.getByText('行情已同步到 10/29，本次結果以 10/28 判定，請重新掃描。').className)
+    .toBe('status-warning')
+  client.clear()
+})
+
+it.each([
+  {},
+  { '/watchlist?limit=500': new Error('失敗') },
+  { '/watchlist?limit=500': [{ id: 10, ticker: '2330' }], '/watchlist/evaluations': new Error('失敗') },
+  { '/watchlist?limit=500': [{ id: 10, ticker: '2330' }], '/watchlist/evaluations': new Promise(() => {}) },
+])('不在觀察清單或查詢未成功時不顯示比較，表格照常顯示', async (responses) => {
+  const { client } = setup({
+    latestMarketDate: null,
+    jobId: 'no-comparison', status: 'done', done: 2, total: 2, error: null, summary,
+  }, responses)
+  await screen.findByRole('link', { name: /2330/ })
+  expect(screen.queryByText(/觀察清單：/)).toBeNull()
   client.clear()
 })

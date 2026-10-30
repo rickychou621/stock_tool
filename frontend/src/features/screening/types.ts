@@ -37,6 +37,7 @@ export interface CandidateRefreshSummary {
 }
 
 export interface ScanMatch {
+  ruleId: number
   evaluationFrequency?: string
   state: RuleStateCode
   id: number | null
@@ -56,6 +57,7 @@ export interface NotificationSummary {
 }
 
 export interface ScanJob {
+  latestMarketDate: string | null
   jobId: string
   status: 'running' | 'done' | 'failed'
   done: number

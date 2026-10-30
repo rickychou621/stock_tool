@@ -13,6 +13,7 @@ class CandidateStockSchema(CamelModel):
 
 
 class ScanMatchSchema(CamelModel):
+    rule_id: int
     evaluation_frequency: str = "daily"
     id: int | None
     ticker: str
@@ -56,6 +57,7 @@ class ScanJobStartedSchema(CamelModel):
 
 
 class ScanJobSchema(ScanJobStartedSchema):
+    latest_market_date: date | None = None
     status: Literal["running", "done", "failed"]
     done: int
     total: int
